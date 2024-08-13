@@ -1,4 +1,4 @@
-# Miniaudio Dart
+# miniaudio_dart
 
 A miniaudio dart ffi wrapper that supports audio playback, recording, and generation.
 
