@@ -1,0 +1,6 @@
+[submodule "miniaudio_dart_ffi/src/external/milo"]
+	path = miniaudio_dart_ffi/src/external/milo
+	url = https://github.com/DaniilAlpha/milo.git
+[submodule "result"]
+	path = miniaudio_dart_ffi/src/external/result
+	url = https://github.com/DaniilAlpha/result

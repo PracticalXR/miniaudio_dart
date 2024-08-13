@@ -1,0 +1,72 @@
+publish_to: none
+name: miniaudio_dart_ffi
+description: FFI implementation of the MiniaudioDart package.
+version: 1.0.0
+repository: https://github.com/DaniilAlpha/miniaudio_dart/tree/master/miniaudio_dart_ffi
+
+#####
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.3.0"
+
+dependencies:
+  ffi: ^2.0.2
+  miniaudio_dart_platform_interface:
+    path: ../miniaudio_dart_platform_interface
+
+dev_dependencies:
+  flutter_lints: ^2.0.1
+  ffigen: ^8.0.2
+
+#####
+
+ffigen:
+  name: MiniaudioDartFfiBindings
+  description: Bindings for miniaudio_dart.h
+  output: "lib/miniaudio_dart_ffi_bindings.dart"
+  headers:
+    entry-points:
+      - "src/include/miniaudio_dart.h"
+      - "src/include/engine.h"
+      - "src/include/sound.h"
+      - "src/include/record.h"
+      - "src/include/generator.h"
+      - "src/include/circular_buffer.h"
+    include-directives:
+      - "src/include/*.h"
+      - "/usr/lib/clang/18/include/stdbool.h"
+  preamble: |
+    // ignore_for_file: camel_case_types
+    // ignore_for_file: prefer_double_quotes
+    // ignore_for_file: non_constant_identifier_names
+    // ignore_for_file: constant_identifier_names
+    // ignore_for_file: prefer_expression_function_bodies
+    // ignore_for_file: sort_constructors_first
+    // ignore_for_file: unused_element 
+  llvm-path:
+    - /usr/lib64/libclang.so
+  compiler-opts:
+    - -I/usr/lib/clang/18/include/
+
+##
+
+flutter:
+  plugin:
+    implements: miniaudio_dart
+    platforms:
+      android:
+        ffiPlugin: true
+        dartPluginClass: MiniaudioDartFfi
+      ios:
+        ffiPlugin: true
+        dartPluginClass: MiniaudioDartFfi
+      linux:
+        ffiPlugin: true
+        dartPluginClass: MiniaudioDartFfi
+      macos:
+        ffiPlugin: true
+        dartPluginClass: MiniaudioDartFfi
+      windows:
+        ffiPlugin: true
+        dartPluginClass: MiniaudioDartFfi
