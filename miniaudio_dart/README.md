@@ -1,6 +1,6 @@
 # miniaudio_dart
 
-WIP forked from https://github.com/DaniilAlpha/minisound/pull/6, original credit for Engine and Sound implementations and brilliant cross-platform lib interface go to DaniilAlpha.
+WIP forked from https://github.com/MichealReed/minisound/pull/6, original credit for Engine and Sound implementations and brilliant cross-platform lib interface go to MichealReed.
 
 ## Getting started on the web
 
