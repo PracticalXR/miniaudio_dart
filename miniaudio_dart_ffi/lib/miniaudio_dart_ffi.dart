@@ -163,9 +163,7 @@ final class FfiSound implements PlatformSound {
 
   @override
   void replay() {
-    if (_bindings.sound_replay(_self) != 1) {
-      throw MiniaudioDartPlatformException("Failed to replay the sound.");
-    }
+    _bindings.sound_replay(_self);
   }
 
   @override

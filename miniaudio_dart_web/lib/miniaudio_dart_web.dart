@@ -43,9 +43,7 @@ final class WebEngine implements PlatformEngine {
 
   @override
   Future<void> init(int periodMs) async {
-    if (await wasm.engine_init(_self, periodMs) != Result.Ok) {
-      throw MiniaudioDartPlatformException("Failed to init the engine.");
-    }
+    await wasm.engine_init(_self, periodMs);
   }
 
   @override
@@ -56,9 +54,7 @@ final class WebEngine implements PlatformEngine {
 
   @override
   void start() {
-    if (wasm.engine_start(_self) != Result.Ok) {
-      throw MiniaudioDartPlatformException("Failed to start the engine.");
-    }
+    wasm.engine_start(_self);
   }
 
   @override
@@ -80,11 +76,6 @@ final class WebEngine implements PlatformEngine {
         audioData.format,
         audioData.sampleRate,
         audioData.channels);
-
-    if (result != Result.Ok) {
-      malloc.free(dataPtr);
-      throw MiniaudioDartPlatformException("Failed to load a sound.");
-    }
 
     return WebSound._fromPtrs(sound, dataPtr);
   }
@@ -126,16 +117,12 @@ final class WebSound implements PlatformSound {
 
   @override
   void play() {
-    if (wasm.sound_play(_self) != Result.Ok) {
-      throw MiniaudioDartPlatformException("Failed to play the sound.");
-    }
+    wasm.sound_play(_self);
   }
 
   @override
   void replay() {
-    if (wasm.sound_replay(_self) != Result.Ok) {
-      throw MiniaudioDartPlatformException("Failed to replay the sound.");
-    }
+    wasm.sound_replay(_self);
   }
 
   @override
