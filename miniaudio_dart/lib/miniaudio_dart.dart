@@ -189,6 +189,24 @@ final class Recorder {
   /// Gets available frames from the recorder.
   int getAvailableFrames() => _recorder.getAvailableFrames();
 
+  /// Streams recorded audio.
+  Stream<Float32List> stream({int chunkSizeMs = 20}) {
+    if (!isInit || !isRecording) {
+      throw StateError("Recorder is not initialized or not recording");
+    }
+
+    final chunkSizeSamples = (sampleRate * chunkSizeMs) ~/ 1000;
+
+    return Stream.periodic(Duration(milliseconds: chunkSizeMs), (_) {
+      final availableFrames = getAvailableFrames();
+      if (availableFrames >= chunkSizeSamples) {
+        return getBuffer(chunkSizeSamples);
+      } else {
+        return Float32List(0);
+      }
+    }).where((chunk) => chunk.isNotEmpty);
+  }
+
   /// Disposes of the recorder resources.
   void dispose() {
     _recorder.dispose();
@@ -208,6 +226,8 @@ final class Generator {
   late Engine engine;
   bool isInit = false;
   bool isGenerating = false;
+  int _channels = 1;
+  int _sampleRate = 48000;
 
   /// Initializes the generator's engine.
   Future initEngine([int periodMs = 10]) async {
@@ -223,6 +243,8 @@ final class Generator {
     if (!isInit) {
       await _generator.init(
           format, channels, sampleRate, bufferDurationSeconds);
+      _channels = channels;
+      _sampleRate = sampleRate;
       isInit = true;
     }
   }
@@ -256,6 +278,23 @@ final class Generator {
 
   /// Gets the number of available frames in the generator's buffer.
   int getAvailableFrames() => _generator.getAvailableFrames();
+
+  Stream<Float32List> stream({int chunkSizeMs = 20}) {
+    if (!isInit || !isGenerating) {
+      throw StateError("Recorder is not initialized or not recording");
+    }
+
+    final chunkSizeSamples = (_sampleRate * chunkSizeMs) ~/ 1000;
+
+    return Stream.periodic(Duration(milliseconds: chunkSizeMs), (_) {
+      final availableFrames = getAvailableFrames();
+      if (availableFrames >= chunkSizeSamples) {
+        return getBuffer(chunkSizeSamples);
+      } else {
+        return Float32List(0);
+      }
+    }).where((chunk) => chunk.isNotEmpty);
+  }
 
   /// Disposes of the generator resources.
   void dispose() {
