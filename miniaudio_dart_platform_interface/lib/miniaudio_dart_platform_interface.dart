@@ -2,17 +2,22 @@
 
 import "dart:typed_data";
 
-import "package:plugin_platform_interface/plugin_platform_interface.dart";
+// Conditional import for platform-specific implementation
+import 'platform_stub/miniaudio_platform_stub.dart'
+    if (dart.library.ffi) 'package:miniaudio_dart_ffi/miniaudio_dart_ffi.dart'
+    if (dart.library.js) 'package:miniaudio_dart_web/miniaudio_dart_web.dart';
 
-abstract class MiniaudioDartPlatform extends PlatformInterface {
-  MiniaudioDartPlatform() : super(token: _token);
+/// Abstract platform interface with a lazily-registered singleton instance.
+abstract class MiniaudioDartPlatformInterface {
+  MiniaudioDartPlatformInterface();
 
-  static final _token = Object();
+  static MiniaudioDartPlatformInterface? _instance;
+  static MiniaudioDartPlatformInterface get instance {
+    _instance ??= registeredInstance();
+    return _instance!;
+  }
 
-  static late MiniaudioDartPlatform _instance;
-  static MiniaudioDartPlatform get instance => _instance;
-  static set instance(MiniaudioDartPlatform instance) {
-    PlatformInterface.verify(instance, _token);
+  static set instance(MiniaudioDartPlatformInterface instance) {
     _instance = instance;
   }
 
@@ -24,7 +29,8 @@ abstract class MiniaudioDartPlatform extends PlatformInterface {
 enum EngineState { uninit, init, started }
 
 abstract interface class PlatformEngine {
-  factory PlatformEngine() => MiniaudioDartPlatform.instance.createEngine();
+  factory PlatformEngine() =>
+      MiniaudioDartPlatformInterface.instance.createEngine();
 
   EngineState state = EngineState.uninit;
 
@@ -56,17 +62,21 @@ abstract interface class PlatformSound {
 }
 
 abstract interface class PlatformRecorder {
-  factory PlatformRecorder() => MiniaudioDartPlatform.instance.createRecorder();
+  factory PlatformRecorder() =>
+      MiniaudioDartPlatformInterface.instance.createRecorder();
 
-  Future<void> initFile(String filename,
-      {int sampleRate = 44800,
-      int channels = 1,
-      int format = AudioFormat.float32});
-  Future<void> initStream(
-      {int sampleRate = 44800,
-      int channels = 1,
-      int format = AudioFormat.float32,
-      int bufferDurationSeconds = 5});
+  Future<void> initFile(
+    String filename, {
+    int sampleRate = 44800,
+    int channels = 1,
+    int format = AudioFormat.float32,
+  });
+  Future<void> initStream({
+    int sampleRate = 44800,
+    int channels = 1,
+    int format = AudioFormat.float32,
+    int bufferDurationSeconds = 5,
+  });
   void start();
   void stop();
   int getAvailableFrames();
@@ -75,26 +85,21 @@ abstract interface class PlatformRecorder {
   void dispose();
 }
 
-enum WaveformType {
-  sine,
-  square,
-  triangle,
-  sawtooth,
-}
+enum WaveformType { sine, square, triangle, sawtooth }
 
-enum NoiseType {
-  white,
-  pink,
-  brownian,
-}
+enum NoiseType { white, pink, brownian }
 
 abstract interface class PlatformGenerator {
   factory PlatformGenerator() =>
-      MiniaudioDartPlatform.instance.createGenerator();
+      MiniaudioDartPlatformInterface.instance.createGenerator();
   double get volume;
   set volume(double value);
   Future<void> init(
-      int format, int channels, int sampleRate, int bufferDurationSeconds);
+    int format,
+    int channels,
+    int sampleRate,
+    int bufferDurationSeconds,
+  );
   void setWaveform(WaveformType type, double frequency, double amplitude);
   void setPulsewave(double frequency, double amplitude, double dutyCycle);
   void setNoise(NoiseType type, int seed, double amplitude);

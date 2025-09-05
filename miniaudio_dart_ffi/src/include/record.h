@@ -34,7 +34,7 @@ typedef struct
     void *user_data;
 } Recorder;
 
-EXPORT typedef enum {
+typedef enum {
     RECORDER_OK = 0,
     RECORDER_ERROR_UNKNOWN,
     RECORDER_ERROR_OUT_OF_MEMORY,

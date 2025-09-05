@@ -19,8 +19,9 @@ final class Engine {
     _finalizer.attach(this, _engine);
   }
 
-  static final _finalizer =
-      Finalizer<PlatformEngine>((engine) => engine.dispose());
+  static final _finalizer = Finalizer<PlatformEngine>(
+    (engine) => engine.dispose(),
+  );
   static final _soundsFinalizer = Finalizer<Sound>((sound) => sound.unload());
 
   final _engine = PlatformEngine();
@@ -107,8 +108,8 @@ final class Sound {
 final class Recorder {
   @override
   Recorder({Engine? mainEngine})
-      : engine = mainEngine ?? Engine(),
-        _recorder = MiniaudioDartPlatform.instance.createRecorder();
+    : engine = mainEngine ?? Engine(),
+      _recorder = MiniaudioDartPlatformInterface.instance.createRecorder();
 
   final PlatformRecorder _recorder;
   Engine engine;
@@ -125,10 +126,12 @@ final class Recorder {
   }
 
   /// Initializes the recorder to save to a file.
-  Future<void> initFile(String filename,
-      {int sampleRate = 44800,
-      int channels = 1,
-      int format = AudioFormat.float32}) async {
+  Future<void> initFile(
+    String filename, {
+    int sampleRate = 44800,
+    int channels = 1,
+    int format = AudioFormat.float32,
+  }) async {
     if (sampleRate <= 0 || channels <= 0) {
       throw ArgumentError("Invalid recorder parameters");
     }
@@ -139,18 +142,23 @@ final class Recorder {
       this.sampleRate = sampleRate;
       this.channels = channels;
       this.format = format;
-      await _recorder.initFile(filename,
-          sampleRate: sampleRate, channels: channels, format: format);
+      await _recorder.initFile(
+        filename,
+        sampleRate: sampleRate,
+        channels: channels,
+        format: format,
+      );
       isInit = true;
     }
   }
 
   /// Initializes the recorder for streaming.
-  Future<void> initStream(
-      {int sampleRate = 44800,
-      int channels = 1,
-      int format = AudioFormat.float32,
-      int bufferDurationSeconds = 5}) async {
+  Future<void> initStream({
+    int sampleRate = 44800,
+    int channels = 1,
+    int format = AudioFormat.float32,
+    int bufferDurationSeconds = 5,
+  }) async {
     if (sampleRate <= 0 || channels <= 0 || bufferDurationSeconds <= 0) {
       throw ArgumentError("Invalid recorder parameters");
     }
@@ -163,10 +171,11 @@ final class Recorder {
       this.format = format;
       this.bufferDurationSeconds = bufferDurationSeconds;
       await _recorder.initStream(
-          sampleRate: sampleRate,
-          channels: channels,
-          format: format,
-          bufferDurationSeconds: bufferDurationSeconds);
+        sampleRate: sampleRate,
+        channels: channels,
+        format: format,
+        bufferDurationSeconds: bufferDurationSeconds,
+      );
       isInit = true;
     }
   }
@@ -216,8 +225,8 @@ final class Recorder {
 /// A generator for waveforms and noise.
 final class Generator {
   Generator({Engine? mainEngine})
-      : engine = mainEngine ?? Engine(),
-        _generator = MiniaudioDartPlatform.instance.createGenerator();
+    : engine = mainEngine ?? Engine(),
+      _generator = MiniaudioDartPlatformInterface.instance.createGenerator();
 
   double get volume => _generator.volume;
   set volume(double value) => _generator.volume = value < 0 ? 0 : value;
@@ -235,14 +244,22 @@ final class Generator {
   }
 
   /// Initializes the generator.
-  Future<void> init(int format, int channels, int sampleRate,
-      int bufferDurationSeconds) async {
+  Future<void> init(
+    int format,
+    int channels,
+    int sampleRate,
+    int bufferDurationSeconds,
+  ) async {
     if (!engine.isInit) {
       await initEngine();
     }
     if (!isInit) {
       await _generator.init(
-          format, channels, sampleRate, bufferDurationSeconds);
+        format,
+        channels,
+        sampleRate,
+        bufferDurationSeconds,
+      );
       _channels = channels;
       _sampleRate = sampleRate;
       isInit = true;

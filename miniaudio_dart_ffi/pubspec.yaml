@@ -1,6 +1,7 @@
 name: miniaudio_dart_ffi
 description: FFI implementation of the MiniaudioDart package.
-version: 1.0.0
+version: 1.0.2
+publish_to: none
 repository: https://github.com/MichealReed/miniaudio_dart/tree/master/miniaudio_dart_ffi
 
 #####
@@ -11,11 +12,13 @@ environment:
 
 dependencies:
   ffi: ^2.0.2
-  miniaudio_dart_platform_interface: 1.0.0
+  miniaudio_dart_platform_interface:
+    path: ../miniaudio_dart_platform_interface
+  native_toolchain_cmake: ^0.0.6-dev.0
 
 dev_dependencies:
   flutter_lints: ^2.0.1
-  ffigen: ^8.0.2
+  ffigen: ^18.0.0
 
 #####
 
@@ -34,6 +37,7 @@ ffigen:
     include-directives:
       - "src/include/*.h"
       - "/usr/lib/clang/18/include/stdbool.h"
+      - "/usr/lib/clang/18/include/stdint.h"
   preamble: |
     // ignore_for_file: camel_case_types
     // ignore_for_file: prefer_double_quotes
@@ -46,25 +50,7 @@ ffigen:
     - /usr/lib64/libclang.so
   compiler-opts:
     - -I/usr/lib/clang/18/include/
+  ffi-native:
+  silence-enum-warning: true
 
 ##
-
-flutter:
-  plugin:
-    implements: miniaudio_dart
-    platforms:
-      android:
-        ffiPlugin: true
-        dartPluginClass: MiniaudioDartFfi
-      ios:
-        ffiPlugin: true
-        dartPluginClass: MiniaudioDartFfi
-      linux:
-        ffiPlugin: true
-        dartPluginClass: MiniaudioDartFfi
-      macos:
-        ffiPlugin: true
-        dartPluginClass: MiniaudioDartFfi
-      windows:
-        ffiPlugin: true
-        dartPluginClass: MiniaudioDartFfi

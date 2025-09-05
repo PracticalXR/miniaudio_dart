@@ -17,7 +17,7 @@ typedef enum {
     GENERATOR_TYPE_NOISE
 } GeneratorType;
 
-EXPORT typedef struct {
+typedef struct {
     CircularBuffer circular_buffer;
     int sample_rate;
     int channels;

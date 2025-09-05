@@ -12,11 +12,21 @@ else()
     set(TARGET_BASENAME miniaudio_dart_web)
 endif()
 
-# Sources (auto-refresh on new files)
-file(GLOB CONFIGURE_DEPENDS MAIN_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/external/*/src/*.c"
+# Sources (explicit list avoids staging/symlink issues)
+set(MAIN_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/circular_buffer.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/engine.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/generator.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/record.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/silence_data_source.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/sound.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/miniaudio/src/miniaudio.c"
 )
+
+list(LENGTH MAIN_SOURCES _src_count)
+if(_src_count EQUAL 0)
+    message(FATAL_ERROR "No sources found; expected sources under ${CMAKE_CURRENT_SOURCE_DIR}/src and external/miniaudio/src")
+endif()
 
 # Target
 if(NOT EMSCRIPTEN)
@@ -35,10 +45,10 @@ target_include_directories(${TARGET_BASENAME} PUBLIC
 target_compile_definitions(${TARGET_BASENAME} PUBLIC
     DART_SHARED_LIB
     MILO_DEFAULT_LVL=MILO_LVL_NONE
-    MINIAUDIO_IMPLEMENTATION
     MA_ENABLE_ONLY_SPECIFIC_BACKENDS
     MA_DEBUG_OUTPUT
 )
+# Note: Do NOT set MINIAUDIO_IMPLEMENTATION globally; it is provided by miniaudio.c
 
 # Platform backends
 if(WIN32)
@@ -107,7 +117,6 @@ else()
     )
     add_dependencies(${TARGET_BASENAME} ${TARGET_BASENAME}_assets)
 
-    # If you have a modify_js.cmake.in, keep using it without root lookup
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/modify_js.cmake.in")
         configure_file(
             "${CMAKE_CURRENT_SOURCE_DIR}/modify_js.cmake.in"
