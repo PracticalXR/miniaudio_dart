@@ -1,80 +1,38 @@
 # Setup
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.15)
 project(miniaudio_dart_ffi VERSION 1.0.0 LANGUAGES C)
 
-# Specify the filename to search for
-set(FILENAME ".projectroot")
+# Options and output configuration
+set(WEB_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/web" CACHE PATH "Directory for web artifacts (when building with Emscripten)")
 
-# Function to check for file existence up the directory hierarchy
-function(find_project_root current_dir filename result_var)
-    set(found FALSE)  # Flag to indicate if the file is found
-    set(current_check_dir "${current_dir}")  # Start from the given directory
-    
-    # Windows flutter embeds 8 levels deep
-    foreach(i RANGE 0 8)
-        set(filepath "${current_check_dir}/${filename}")
-        
-        if(EXISTS "${filepath}")
-            set(${result_var} "${current_check_dir}" PARENT_SCOPE)
-            set(found TRUE)
-            break()
-        endif()
-        
-        # Move one level up
-        get_filename_component(current_check_dir "${current_check_dir}" DIRECTORY)
-    endforeach()
-    
-    if(NOT found)
-        set(${result_var} "" PARENT_SCOPE)  # Set to empty if not found
-    endif()
-endfunction()
-
-# Call the function to find the project root
-find_project_root("${CMAKE_CURRENT_SOURCE_DIR}" "${FILENAME}" TARGET_FILE_PATH)
-
-# Check if the target file path was found
-if(TARGET_FILE_PATH)
-    message(STATUS "Project root found at ${TARGET_FILE_PATH}")
-else()
-    message(FATAL_ERROR "File ${FILENAME} not found within 2 levels up from ${CMAKE_CURRENT_SOURCE_DIR}")
-endif()
-
-# Set lib name
+# Target names
 if(NOT EMSCRIPTEN)
-    set(MAIN_LIB miniaudio_dart_ffi)
+    set(TARGET_BASENAME miniaudio_dart_ffi)
 else()
-    set(MAIN_LIB miniaudio_dart_web)
-    set(MAIN_JS miniaudio_dart_web_js)
+    set(TARGET_BASENAME miniaudio_dart_web)
 endif()
 
-# Set paths
-set(MAIN_PATH ${CMAKE_CURRENT_SOURCE_DIR})
-set(MAIN_OUT_PATH ${CMAKE_CURRENT_BINARY_DIR})
-set(WEB_OUTPUT_DIR ${TARGET_FILE_PATH}/miniaudio_dart_web/lib/build)
-
-# Main lib
-if(NOT EMSCRIPTEN)
-    add_library(${MAIN_LIB} SHARED)
-else()
-    add_executable(${MAIN_LIB})
-endif()
-
-# Sources
-file(GLOB_RECURSE MAIN_SOURCES
-    ${MAIN_PATH}/src/*.c
-    ${MAIN_PATH}/external/*/src/*.c
+# Sources (auto-refresh on new files)
+file(GLOB CONFIGURE_DEPENDS MAIN_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/*/src/*.c"
 )
-target_sources(${MAIN_LIB} PUBLIC ${MAIN_SOURCES})
+
+# Target
+if(NOT EMSCRIPTEN)
+    add_library(${TARGET_BASENAME} SHARED ${MAIN_SOURCES})
+else()
+    add_executable(${TARGET_BASENAME} ${MAIN_SOURCES})
+endif()
 
 # Includes
-file(GLOB_RECURSE MAIN_INCLUDES LIST_DIRECTORIES TRUE
-    ${MAIN_PATH}/external/*/include/
+target_include_directories(${TARGET_BASENAME} PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/miniaudio/include"
 )
-list(APPEND MAIN_INCLUDES ${MAIN_PATH}/include/)
-target_include_directories(${MAIN_LIB} PUBLIC ${MAIN_INCLUDES})
 
 # Definitions
-target_compile_definitions(${MAIN_LIB} PUBLIC 
+target_compile_definitions(${TARGET_BASENAME} PUBLIC
     DART_SHARED_LIB
     MILO_DEFAULT_LVL=MILO_LVL_NONE
     MINIAUDIO_IMPLEMENTATION
@@ -82,20 +40,20 @@ target_compile_definitions(${MAIN_LIB} PUBLIC
     MA_DEBUG_OUTPUT
 )
 
-# Platform-specific definitions
+# Platform backends
 if(WIN32)
-    target_compile_definitions(${MAIN_LIB} PUBLIC MA_ENABLE_WASAPI)
+    target_compile_definitions(${TARGET_BASENAME} PUBLIC MA_ENABLE_WASAPI)
 elseif(ANDROID)
-    target_compile_definitions(${MAIN_LIB} PUBLIC MA_ENABLE_OPENSL)
+    target_compile_definitions(${TARGET_BASENAME} PUBLIC MA_ENABLE_OPENSL)
 elseif(EMSCRIPTEN)
-    target_compile_definitions(${MAIN_LIB} PUBLIC
+    target_compile_definitions(${TARGET_BASENAME} PUBLIC
         MA_ENABLE_WEBAUDIO
         MA_ENABLE_AUDIO_WORKLETS
     )
 elseif(APPLE)
-    target_compile_definitions(${MAIN_LIB} PUBLIC MA_ENABLE_COREAUDIO)
+    target_compile_definitions(${TARGET_BASENAME} PUBLIC MA_ENABLE_COREAUDIO)
 elseif(UNIX)
-    target_compile_definitions(${MAIN_LIB} PUBLIC
+    target_compile_definitions(${TARGET_BASENAME} PUBLIC
         MA_ENABLE_PULSEAUDIO
         MA_ENABLE_JACK
         MA_ENABLE_ALSA
@@ -104,71 +62,79 @@ else()
     message(FATAL_ERROR "No miniaudio backend specified for the platform.")
 endif()
 
-# Set properties
+# Properties
 if(NOT EMSCRIPTEN)
-    set_target_properties(${MAIN_LIB} PROPERTIES
-        PUBLIC_HEADER include/miniaudio_dart.h
-        OUTPUT_NAME ${MAIN_LIB}
+    set_target_properties(${TARGET_BASENAME} PROPERTIES
+        PUBLIC_HEADER "include/miniaudio_dart.h"
+        OUTPUT_NAME "${TARGET_BASENAME}"
     )
 else()
-    set_target_properties(${MAIN_LIB} PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${WEB_OUTPUT_DIR}
+    # Emscripten output
+    set_target_properties(${TARGET_BASENAME} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${WEB_OUTPUT_DIR}"
+        OUTPUT_NAME "${TARGET_BASENAME}"
     )
-    target_compile_options(${MAIN_LIB} PUBLIC
-        -O0
-        -flto -fno-rtti
+    target_compile_options(${TARGET_BASENAME} PRIVATE
+        -O2
+        -flto
+        -fno-rtti
+    )
+    target_link_options(${TARGET_BASENAME} PRIVATE
+        -O2
+        -flto
+        -sEXPORTED_FUNCTIONS=_malloc,_free
+        -sEXPORTED_RUNTIME_METHODS=ccall
+        -sALLOW_MEMORY_GROWTH
+        -sMAXIMUM_MEMORY=1gb
+        -sNO_DEFAULT_TO_CXX
+        -sNO_TEXTDECODER
+        -sFORCE_FILESYSTEM=1
+        -sNO_FETCH_SUPPORT_INDEXEDDB
+        -sAUDIO_WORKLET=1
         -sWASM_WORKERS=1
+        -sASYNCIFY
+        -sSTACK_SIZE=1mb
+        -sSTACK_OVERFLOW_CHECK
     )
-    set_target_properties(${MAIN_LIB} PROPERTIES LINK_FLAGS "\
-        -O2 \
-        -flto \
-        -sEXPORTED_FUNCTIONS=_malloc,_free -sEXPORTED_RUNTIME_METHODS=ccall \
-        -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=1gb  \
-        -sNO_DEFAULT_TO_CXX -sNO_TEXTDECODER -sFORCE_FILESYSTEM=1 -sNO_FETCH_SUPPORT_INDEXEDDB \
-        -sAUDIO_WORKLET=1 -sWASM_WORKERS=1 -sASYNCIFY -sSTACK_SIZE=1mb \
-        -sSTACK_OVERFLOW_CHECK \
-    ")
-endif()
 
-# Main JS
-if(EMSCRIPTEN)
-    file(GLOB JS_SOURCES ${MAIN_PATH}/js/*.js)
-    set(JS_OUTPUTS)
-    foreach(JS_FILE ${JS_SOURCES})
-        get_filename_component(JS_FILENAME ${JS_FILE} NAME)
-        set(JS_OUTPUT ${WEB_OUTPUT_DIR}/${JS_FILENAME})
-        list(APPEND JS_OUTPUTS ${JS_OUTPUT})
-        add_custom_command(
-            OUTPUT ${JS_OUTPUT}
-            COMMAND ${CMAKE_COMMAND} -E copy ${JS_FILE} ${JS_OUTPUT}
-            DEPENDS ${JS_FILE}
-            COMMENT "Copying ${JS_FILENAME} to web output directory"
+    # Copy JS loader assets to web output
+    file(GLOB JS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/js/*.js")
+    add_custom_target(${TARGET_BASENAME}_assets ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${WEB_OUTPUT_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${JS_SOURCES} "${WEB_OUTPUT_DIR}"
+        DEPENDS ${JS_SOURCES}
+        COMMENT "Copying JS loader assets to ${WEB_OUTPUT_DIR}"
+    )
+    add_dependencies(${TARGET_BASENAME} ${TARGET_BASENAME}_assets)
+
+    # If you have a modify_js.cmake.in, keep using it without root lookup
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/modify_js.cmake.in")
+        configure_file(
+            "${CMAKE_CURRENT_SOURCE_DIR}/modify_js.cmake.in"
+            "${CMAKE_CURRENT_BINARY_DIR}/modify_js.cmake"
+            @ONLY
         )
-    endforeach()
-    add_custom_target(${MAIN_JS} ALL
-        DEPENDS ${JS_OUTPUTS}
-        COMMENT "Copying JS sources to web output directory"
-    )
-    add_dependencies(${MAIN_LIB} ${MAIN_JS})
-
-    # Configure the modify_js.cmake script
-    configure_file(
-        ${CMAKE_CURRENT_SOURCE_DIR}/modify_js.cmake.in
-        ${CMAKE_CURRENT_BINARY_DIR}/modify_js.cmake
-        @ONLY
-    )
-
-    # Add custom command to modify the output JS file
-    add_custom_command(
-        TARGET ${MAIN_LIB} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E echo "Modifying ${MAIN_LIB}.js to use locateFile"
-        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/modify_js.cmake
-        WORKING_DIRECTORY ${WEB_OUTPUT_DIR}
-        COMMENT "Post-processing ${MAIN_LIB}.js"
-    )
+        add_custom_command(
+            TARGET ${TARGET_BASENAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "Modifying ${TARGET_BASENAME}.js to use locateFile"
+            COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_BINARY_DIR}/modify_js.cmake"
+            WORKING_DIRECTORY "${WEB_OUTPUT_DIR}"
+            COMMENT "Post-processing ${TARGET_BASENAME}.js"
+        )
+    endif()
 endif()
 
 # Additional libs
 if(ANDROID)
-    target_link_libraries(${MAIN_LIB} OpenSLES log)
+    target_link_libraries(${TARGET_BASENAME} PRIVATE OpenSLES log)
+endif()
+
+# Install (native only; optional)
+if(NOT EMSCRIPTEN)
+    install(TARGETS ${TARGET_BASENAME}
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        PUBLIC_HEADER DESTINATION include
+    )
 endif()
