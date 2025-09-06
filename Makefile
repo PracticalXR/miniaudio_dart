@@ -67,7 +67,7 @@ ffigen: init_submodules
 
 build_weblib: init_submodules
 	@echo "Building ffi lib to web via emscripten..."
-	@cd $(BUILD_DIR) && emcmake cmake .. && cmake --build .
+	@cd $(BUILD_DIR) && emcmake cmake .. -DCMAKE_TOOLCHAIN_FILE=$(EMSDK)/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake -DCMAKE_BUILD_TYPE=Release && cmake --build .
 
 clean_weblib:
 	@echo "Cleaning web lib..."

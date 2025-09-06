@@ -159,31 +159,46 @@ void sound_set_looped(
     bool const value,
     size_t const delay_ms)
 {
-    if (value)
-    {
-        if (delay_ms <= 0)
-        {
-            ma_data_source_set_looping(&self->decoder, true);
-        }
-        else
-        {
-            SilenceDataSourceConfig const config = silence_data_source_config(
-                self->decoder.outputFormat,
-                self->decoder.outputChannels,
-                self->decoder.outputSampleRate,
-                (delay_ms * self->decoder.outputSampleRate) / 1000);
-            silence_data_source_init(&self->loop_delay_ds, &config);
+    // Track state
+    self->is_looped = value;
+    self->loop_delay_ms = (int)delay_ms;
 
-            ma_data_source_set_next(&self->decoder, &self->loop_delay_ds);
-            ma_data_source_set_next(&self->loop_delay_ds, &self->decoder);
-        }
-    }
-    else
-    {
-        // TODO? maybe refactor this
+    // Choose the actual data source we wrapped the ma_sound with.
+    ma_data_source* src = self->is_raw_data
+        ? (ma_data_source*)&self->buffer
+        : (ma_data_source*)&self->decoder;
 
-        ma_data_source_set_current(&self->decoder, &self->decoder);
-        ma_data_source_set_looping(&self->decoder, false);
-        ma_data_source_set_next(&self->decoder, NULL);
+    if (!value) {
+        // Turn off looping and break any chain.
+        ma_data_source_set_looping(src, false);
+        ma_data_source_set_next(src, NULL);
+        ma_data_source_set_next((ma_data_source*)&self->loop_delay_ds, NULL);
+        // Reset the current pointer to the head (optional, but safe).
+        ma_data_source_set_current(src, src);
+        return;
     }
+
+    if (delay_ms == 0) {
+        // Simple seamless loop on the current source.
+        ma_data_source_set_looping(src, true);
+        return;
+    }
+
+    // Delayed loop: src -> silence(delay) -> src
+    ma_format fmt = ma_format_unknown;
+    ma_uint32 ch = 0;
+    ma_uint32 sr = 0;
+    ma_data_source_get_data_format(src, &fmt, &ch, &sr, NULL, 0);
+
+    ma_uint64 delayFrames = ((ma_uint64)delay_ms * sr) / 1000;
+
+    SilenceDataSourceConfig const cfg =
+        silence_data_source_config(fmt, (int)ch, (int)sr, delayFrames);
+
+    // (Re)initialize delay data source (idempotent if your impl handles it).
+    silence_data_source_init(&self->loop_delay_ds, &cfg);
+
+    ma_data_source_set_looping(src, false); // chaining handles the loop
+    ma_data_source_set_next(src, (ma_data_source*)&self->loop_delay_ds);
+    ma_data_source_set_next((ma_data_source*)&self->loop_delay_ds, src);
 }

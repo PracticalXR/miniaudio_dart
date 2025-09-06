@@ -8,15 +8,6 @@ library miniaudio_dart;
 import "package:js/js.dart";
 import "package:js/js_util.dart";
 import "package:miniaudio_dart_platform_interface/miniaudio_dart_platform_interface.dart";
-import "package:miniaudio_dart_web/bindings/wasm/wasm.dart";
-
-final class Engine extends Opaque {}
-
-final class Sound extends Opaque {}
-
-final class Recorder extends Opaque {}
-
-final class Generator extends Opaque {}
 
 // JS interop
 @JS("ccall")
@@ -24,15 +15,14 @@ external dynamic _ccall(
     String name, String returnType, List<String> argTypes, List args, Map opts);
 
 // Engine functions
-Pointer<Engine> engine_alloc() => Pointer(_engine_alloc(), 1, safe: true);
-Future<int> engine_init(Pointer<Engine> self, int periodMs) =>
-    _engine_init(self.addr, periodMs);
-void engine_uninit(Pointer<Engine> self) => _engine_uninit(self.addr);
-int engine_start(Pointer<Engine> self) => _engine_start(self.addr);
-int engine_load_sound(Pointer<Engine> self, Pointer<Sound> sound, Pointer data,
-        int dataSize, int format, int sampleRate, int channels) =>
-    _engine_load_sound(self.addr, sound.addr, data.addr, dataSize, format,
-        sampleRate, channels);
+int engine_alloc() => _engine_alloc();
+Future<int> engine_init(int self, int periodMs) => _engine_init(self, periodMs);
+void engine_uninit(int self) => _engine_uninit(self);
+int engine_start(int self) => _engine_start(self);
+int engine_load_sound(int self, int sound, int data, int dataSize, int format,
+        int sampleRate, int channels) => // sampleRate, then channels
+    _engine_load_sound(
+        self, sound, data, dataSize, format, sampleRate, channels);
 
 // Engine JS bindings
 @JS()
@@ -46,23 +36,20 @@ external void _engine_uninit(int self);
 external int _engine_start(int self);
 @JS()
 external int _engine_load_sound(int self, int sound, int data, int dataSize,
-    int format, int sampleRate, int channels);
+    int format, int sampleRate, int channels); // sampleRate, then channels
 
 // Sound functions
-Pointer<Sound> sound_alloc(int size) =>
-    Pointer(_sound_alloc(), size, safe: true);
-void sound_unload(Pointer<Sound> self) => _sound_unload(self.addr);
-int sound_play(Pointer<Sound> self) => _sound_play(self.addr);
-int sound_replay(Pointer<Sound> self) => _sound_replay(self.addr);
-void sound_pause(Pointer<Sound> self) => _sound_pause(self.addr);
-void sound_stop(Pointer<Sound> self) => _sound_stop(self.addr);
-double sound_get_volume(Pointer<Sound> self) => _sound_get_volume(self.addr);
-void sound_set_volume(Pointer<Sound> self, double value) =>
-    _sound_set_volume(self.addr, value);
-double sound_get_duration(Pointer<Sound> self) =>
-    _sound_get_duration(self.addr);
-void sound_set_looped(Pointer<Sound> self, bool value, int delay_ms) =>
-    _sound_set_looped(self.addr, value, delay_ms);
+int sound_alloc() => _sound_alloc();
+void sound_unload(int self) => _sound_unload(self);
+int sound_play(int self) => _sound_play(self);
+int sound_replay(int self) => _sound_replay(self);
+void sound_pause(int self) => _sound_pause(self);
+void sound_stop(int self) => _sound_stop(self);
+double sound_get_volume(int self) => _sound_get_volume(self);
+void sound_set_volume(int self, double value) => _sound_set_volume(self, value);
+double sound_get_duration(int self) => _sound_get_duration(self);
+void sound_set_looped(int self, bool value, int delay_ms) =>
+    _sound_set_looped(self, value, delay_ms);
 
 // Sound JS bindings
 @JS()
@@ -84,37 +71,35 @@ external void _sound_set_volume(int self, double value);
 @JS()
 external double _sound_get_duration(int self);
 @JS()
-external int _sound_set_looped(int self, bool value, int delay_ms);
+external void _sound_set_looped(
+    int self, bool value, int delay_ms); // FIX: void
 
 // Recorder functions
-Pointer<Recorder> recorder_create() =>
-    Pointer(_recorder_create(), 1, safe: true);
-Future<int> recorder_init_file(Pointer<Recorder> self, String filename,
+int recorder_create() => _recorder_create();
+Future<int> recorder_init_file(int self, String filename,
         {int sampleRate = 44800,
         int channels = 1,
         int format = AudioFormat.float32}) =>
-    _recorder_init_file(self.addr, filename,
+    _recorder_init_file(self, filename,
         sampleRate: sampleRate, channels: channels, format: format);
-Future<int> recorder_init_stream(Pointer<Recorder> self,
+Future<int> recorder_init_stream(int self,
         {int sampleRate = 44800,
         int channels = 1,
         int format = AudioFormat.float32,
         int bufferDurationSeconds = 5}) =>
-    _recorder_init_stream(self.addr,
+    _recorder_init_stream(self,
         sampleRate: sampleRate,
         channels: channels,
         format: format,
         bufferDurationSeconds: bufferDurationSeconds);
-int recorder_start(Pointer<Recorder> self) => _recorder_start(self.addr);
-int recorder_stop(Pointer<Recorder> self) => _recorder_stop(self.addr);
-int recorder_get_available_frames(Pointer<Recorder> self) =>
-    _recorder_get_available_frames(self.addr);
-bool recorder_is_recording(Pointer<Recorder> self) =>
-    _recorder_is_recording(self.addr);
-int recorder_get_buffer(
-        Pointer<Recorder> self, Pointer<Float> output, int frames_to_read) =>
-    _recorder_get_buffer(self.addr, output.addr, frames_to_read);
-void recorder_destroy(Pointer<Recorder> self) => _recorder_destroy(self.addr);
+int recorder_start(int self) => _recorder_start(self);
+int recorder_stop(int self) => _recorder_stop(self);
+int recorder_get_available_frames(int self) =>
+    _recorder_get_available_frames(self);
+bool recorder_is_recording(int self) => _recorder_is_recording(self);
+int recorder_get_buffer(int self, int output, int frames_to_read) =>
+    _recorder_get_buffer(self, output, frames_to_read);
+void recorder_destroy(int self) => _recorder_destroy(self);
 
 // Recorder JS bindings
 @JS()
@@ -141,7 +126,6 @@ Future<int> _recorder_init_stream(int self,
         [self, sampleRate, channels, format, bufferDurationSeconds],
         {"async": true}));
 
-// Recorder JS bindings
 @JS()
 external int _recorder_start(int self);
 @JS()
@@ -156,42 +140,36 @@ external int _recorder_get_buffer(int self, int output, int frames_to_read);
 external void _recorder_destroy(int self);
 
 // Generator functions
-Pointer<Generator> generator_create() =>
-    Pointer(_generator_create(), 1, safe: true);
-Future<int> generator_init(Pointer<Generator> self, int format, int channels,
-        int sample_rate, int buffer_duration_seconds) async =>
-    _generator_init(self.addr,
+int generator_create() => _generator_create();
+Future<int> generator_init(int self, int format, int channels, int sample_rate,
+        int buffer_duration_seconds) async =>
+    _generator_init(self,
         format: format,
         channels: channels,
         sampleRate: sample_rate,
         bufferDuration: buffer_duration_seconds);
-int generator_set_waveform(Pointer<Generator> self, int type, double frequency,
-        double amplitude) =>
-    _generator_set_waveform(self.addr, type, frequency, amplitude);
-int generator_set_pulsewave(Pointer<Generator> self, double frequency,
-        double amplitude, double dutyCycle) =>
-    _generator_set_pulsewave(self.addr, frequency, amplitude, dutyCycle);
-int generator_set_noise(
-        Pointer<Generator> self, int type, int seed, double amplitude) =>
-    _generator_set_noise(self.addr, type, seed, amplitude);
-int generator_get_buffer(
-        Pointer<Generator> self, Pointer<Float> output, int frames_to_read) =>
-    _generator_get_buffer(self.addr, output.addr, frames_to_read);
-int generator_start(Pointer<Generator> self) => _generator_start(self.addr);
-int generator_stop(Pointer<Generator> self) => _generator_stop(self.addr);
-double generator_get_volume(Pointer<Generator> self) =>
-    _generator_get_volume(self.addr);
-void generator_set_volume(Pointer<Generator> self, double value) =>
-    _generator_set_volume(self.addr, value);
-int generator_get_available_frames(Pointer<Generator> self) =>
-    _generator_get_available_frames(self.addr);
-void generator_destroy(Pointer<Generator> self) =>
-    _generator_destroy(self.addr);
+int generator_set_waveform(
+        int self, int type, double frequency, double amplitude) =>
+    _generator_set_waveform(self, type, frequency, amplitude);
+int generator_set_pulsewave(
+        int self, double frequency, double amplitude, double dutyCycle) =>
+    _generator_set_pulsewave(self, frequency, amplitude, dutyCycle);
+int generator_set_noise(int self, int type, int seed, double amplitude) =>
+    _generator_set_noise(self, type, seed, amplitude);
+int generator_get_buffer(int self, int output, int frames_to_read) =>
+    _generator_get_buffer(self, output, frames_to_read);
+int generator_start(int self) => _generator_start(self);
+int generator_stop(int self) => _generator_stop(self);
+double generator_get_volume(int self) => _generator_get_volume(self);
+void generator_set_volume(int self, double value) =>
+    _generator_set_volume(self, value);
+int generator_get_available_frames(int self) =>
+    _generator_get_available_frames(self);
+void generator_destroy(int self) => _generator_destroy(self);
 
 // Generator JS bindings
 @JS()
 external int _generator_create();
-
 Future<int> _generator_init(int self,
         {int sampleRate = 44800,
         int channels = 1,

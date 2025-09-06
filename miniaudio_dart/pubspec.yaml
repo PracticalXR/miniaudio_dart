@@ -1,13 +1,13 @@
 name: miniaudio_dart
 description: A high-level real-time audio playback library based on Miniaudio.
-version: 1.0.2
+version: 1.0.4
 publish_to: none
 repository: https://github.com/MichealReed/miniaudio_dart/tree/master/miniaudio_dart
 
 #####
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=3.6.0 <4.0.0"
   flutter: ">=1.20.0"
 
 dependencies:
@@ -31,3 +31,13 @@ flutter:
 
   assets:
     - assets/laser_shoot.wav
+
+#####
+
+platforms:
+  windows:
+  android:
+  linux:
+  ios:
+  macos:
+  web:

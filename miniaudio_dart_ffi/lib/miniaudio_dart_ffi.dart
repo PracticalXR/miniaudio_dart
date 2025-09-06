@@ -70,16 +70,16 @@ final class FfiEngine implements PlatformEngine {
 
   @override
   Future<PlatformSound> loadSound(AudioData audioData) async {
-    final int dataSize = audioData.buffer.lengthInBytes;
-    final Pointer<Float> dataPtr = calloc.allocate<Float>(
-      audioData.buffer.length * sizeOf<Float>(),
-    );
-
-    final Float32List floatList = dataPtr.asTypedList(audioData.buffer.length);
-    floatList.setAll(0, audioData.buffer);
-
+    // Allocate exact number of float samples (elements), not bytes.
+    final int sampleCount = audioData.buffer.length;
+    final Pointer<Float> dataPtr = calloc<Float>(sampleCount);
+    // Copy PCM into native buffer.
+    dataPtr.asTypedList(sampleCount).setAll(0, audioData.buffer);
+    // Size in bytes for the native API (if it expects bytes).
+    final int dataSize = sampleCount * sizeOf<Float>();
     final Pointer<bindings.Sound> sound = bindings.sound_alloc();
     if (sound == nullptr) {
+      calloc.free(dataPtr);
       throw MiniaudioDartPlatformException("Failed to allocate a sound.");
     }
 
@@ -96,6 +96,7 @@ final class FfiEngine implements PlatformEngine {
 
     if (result != 1) {
       bindings.sound_unload(sound);
+      calloc.free(dataPtr); // avoid leak on failure
       throw MiniaudioDartPlatformException("Failed to load a sound.");
     }
 
@@ -234,29 +235,22 @@ class FfiRecorder implements PlatformRecorder {
 
   @override
   Float32List getBuffer(int framesToRead) {
-    try {
-      final floatsToRead = framesToRead *
-          sizeOf<Float>(); // Calculate the actual number of floats to read
-
-      bufferPtr = calloc.allocate<Float>(
-        floatsToRead,
-      ); // Allocate memory for the float buffer
-      final floatsRead = bindings.recorder_get_buffer(
-        _self,
-        bufferPtr,
-        floatsToRead,
+    // framesToRead is interpreted by the native side; the third argument is a count,
+    // not bytes. Allocate that many float elements and free after copying.
+    final int requested =
+        framesToRead; // native may treat this as frames or samples
+    final Pointer<Float> ptr = calloc<Float>(requested);
+    final int read = bindings.recorder_get_buffer(_self, ptr, requested);
+    if (read < 0) {
+      calloc.free(ptr);
+      throw MiniaudioDartPlatformException(
+        "Failed to get recorder buffer. Error code: $read",
       );
-
-      // Error handling for negative return values
-      if (floatsRead < 0) {
-        throw MiniaudioDartPlatformException(
-          "Failed to get recorder buffer. Error code: $floatsRead",
-        );
-      }
-
-      // Convert the data in the allocated memory to a Dart Float32List
-      return Float32List.fromList(bufferPtr.asTypedList(floatsRead));
-    } finally {}
+    }
+    // Copy out so we can free native memory immediately.
+    final out = Float32List.fromList(ptr.asTypedList(read));
+    calloc.free(ptr);
+    return out;
   }
 
   @override
@@ -366,29 +360,19 @@ class FfiGenerator implements PlatformGenerator {
 
   @override
   Float32List getBuffer(int framesToRead) {
-    try {
-      final floatsToRead =
-          framesToRead * 8; // Calculate the actual number of floats to read
-
-      bufferPtr = calloc.allocate<Float>(
-        floatsToRead,
-      ); // Allocate memory for the float buffer
-      final floatsRead = bindings.generator_get_buffer(
-        _self,
-        bufferPtr,
-        floatsToRead,
+    // Same as recorder: counts are elements, not bytes.
+    final int requested = framesToRead;
+    final Pointer<Float> ptr = calloc<Float>(requested);
+    final int read = bindings.generator_get_buffer(_self, ptr, requested);
+    if (read < 0) {
+      calloc.free(ptr);
+      throw MiniaudioDartPlatformException(
+        "Failed to get generator buffer. Error code: $read",
       );
-
-      // Error handling for negative return values
-      if (floatsRead < 0) {
-        throw MiniaudioDartPlatformException(
-          "Failed to get recorder buffer. Error code: $floatsRead",
-        );
-      }
-
-      // Convert the data in the allocated memory to a Dart Float32List
-      return Float32List.fromList(bufferPtr.asTypedList(floatsRead));
-    } finally {}
+    }
+    final out = Float32List.fromList(ptr.asTypedList(read));
+    calloc.free(ptr);
+    return out;
   }
 
   @override

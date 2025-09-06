@@ -47,14 +47,16 @@ class _ExamplePageState extends State<ExamplePage> {
   @override
   void initState() {
     super.initState();
-    soundFuture = _initializeSound();
+    soundFuture =
+        _initializeSound(); // kick off after WASM is ready (index.html awaits loader)
   }
 
   Future<Sound> _initializeSound() async {
     if (!engine.isInit) {
       await engine.init();
-      recorder = Recorder(mainEngine: engine);
-      generator = Generator(mainEngine: engine);
+
+      recorder = Recorder();
+      generator = Generator();
     }
     return engine.loadSoundAsset("assets/laser_shoot.wav");
   }
@@ -382,7 +384,8 @@ class _ExamplePageState extends State<ExamplePage> {
                       ),
                     );
                   } else {
-                    return Text("Error: ${snapshot.error}");
+                    return SelectableText(
+                        "Error: ${snapshot.error} $snapshot.stackTrace");
                   }
                 default:
                   return const CircularProgressIndicator();
@@ -395,6 +398,7 @@ class _ExamplePageState extends State<ExamplePage> {
   void accumulateRecorderFrames() {
     if (recorder.isRecording) {
       final frames = recorder.getAvailableFrames();
+      if (frames <= 0) return; // FIX: guard
       final buffer = recorder.getBuffer(frames);
       if (buffer.isNotEmpty) {
         recordingBuffer.add(buffer);
@@ -431,9 +435,6 @@ class _ExamplePageState extends State<ExamplePage> {
       combinedBuffer.setAll(offset, chunk);
       offset += chunk.length;
     }
-
-    print("Combined buffer length: ${combinedBuffer.length}");
-    print("Total recorded frames: $totalFrames");
 
     final audioData = AudioData(
       combinedBuffer.buffer.asFloat32List(),

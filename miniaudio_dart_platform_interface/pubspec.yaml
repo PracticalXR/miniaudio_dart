@@ -1,12 +1,12 @@
 name: miniaudio_dart_platform_interface
 description: A common platform interface for the MiniaudioDart package.
-version: 1.0.2
-repository: https://github.com/MichealReed/miniaudio_dart/tree/master/miniaudio_dart_platform_interface
+version: 1.0.4
 publish_to: none
+repository: https://github.com/MichealReed/miniaudio_dart/tree/master/miniaudio_dart_platform_interface
 #####
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=3.6.0 <4.0.0"
 
 dependencies:
   miniaudio_dart_ffi:

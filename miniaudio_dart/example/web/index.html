@@ -39,32 +39,20 @@
   </script>
 
   <script src="assets/packages/miniaudio_dart_web/build/miniaudio_dart_web.loader.js"></script>
-
-  <!-- This script adds the flutter initialization JS code -->
   <script src="flutter.js" defer></script>
 </head>
-
 <body>
   <script>
-    window.addEventListener(
-      'load',
-      async function (ev) {
-        // load miniaudio_dart
-        await _miniaudio_dart.loader.load();
+    (async function () {
+      // Ensure Emscripten runtime is fully initialized first.
+      await _miniaudio_dart.loader.load();
 
-        // Download main.dart.js
-        _flutter.loader.loadEntrypoint({
-          serviceWorker: {
-            serviceWorkerVersion: serviceWorkerVersion,
-          },
-          onEntrypointLoaded: function (engineInitializer) {
-            engineInitializer.initializeEngine().then(function (appRunner) {
-              appRunner.runApp();
-            });
-          }
-        });
-      }
-    );
+      // Now boot Flutter.
+      const engine = await _flutter.loader.loadEntrypoint({
+        serviceWorker: { serviceWorkerVersion: serviceWorkerVersion },
+      });
+      (await engine.initializeEngine()).runApp();
+    })();
   </script>
 </body>
 

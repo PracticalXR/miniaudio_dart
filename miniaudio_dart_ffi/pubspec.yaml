@@ -1,13 +1,13 @@
 name: miniaudio_dart_ffi
 description: FFI implementation of the MiniaudioDart package.
-version: 1.0.2
+version: 1.0.4
 publish_to: none
 repository: https://github.com/MichealReed/miniaudio_dart/tree/master/miniaudio_dart_ffi
 
 #####
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=3.6.0 <4.0.0"
   flutter: ">=3.3.0"
 
 dependencies:

@@ -1,8 +1,15 @@
 # modify_js.cmake.in
-file(READ "@MAIN_LIB@.js" JS_CONTENT)
+if(NOT DEFINED JS_FILE)
+  message(FATAL_ERROR "JS_FILE not defined")
+endif()
+if(NOT EXISTS "${JS_FILE}")
+  message(FATAL_ERROR "JS file not found: ${JS_FILE}")
+endif()
+
+file(READ "${JS_FILE}" JS_CONTENTS)
 string(REPLACE 
     "audioWorklet.addModule(\"@MAIN_LIB@.aw.js\")" 
     "audioWorklet.addModule(locateFile(\"@MAIN_LIB@.aw.js\"))" 
-    MODIFIED_JS_CONTENT "${JS_CONTENT}"
+    MODIFIED_JS_CONTENT "${JS_CONTENTS}"
 )
-file(WRITE "@MAIN_LIB@.js" "${MODIFIED_JS_CONTENT}")
+file(WRITE "${JS_FILE}" "${MODIFIED_JS_CONTENT}")  # fixed var name

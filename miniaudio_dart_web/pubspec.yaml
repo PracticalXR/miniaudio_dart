@@ -1,19 +1,22 @@
 name: miniaudio_dart_web
 description: Web implementation of the MiniaudioDart package.
-version: 1.0.2
+version: 1.0.4
 publish_to: none
 repository: https://github.com/MichealReed/miniaudio_dart/tree/master/miniaudio_dart_web
 
 #####
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=3.6.0 <4.0.0"
   flutter: ">=1.20.0"
 
 dependencies:
   js: ^0.6.3
   miniaudio_dart_platform_interface:
     path: ../miniaudio_dart_platform_interface
+  flutter_web_plugins:
+    sdk: flutter
+  js_interop_utils: ^1.0.5
 
 dev_dependencies:
   flutter_lints: ^3.0.1
@@ -21,9 +24,13 @@ dev_dependencies:
 #####
 
 flutter:
+  plugin:
+    implements: miniaudio_dart
+    platforms:
+      web:
+        pluginClass: MiniaudioDartWeb
+        fileName: miniaudio_dart_web.dart
   assets:
     - packages/miniaudio_dart_web/build/miniaudio_dart_web.loader.js
     - packages/miniaudio_dart_web/build/miniaudio_dart_web.wasm
     - packages/miniaudio_dart_web/build/miniaudio_dart_web.js
-    - packages/miniaudio_dart_web/build/miniaudio_dart_web.aw.js
-    - packages/miniaudio_dart_web/build/miniaudio_dart_web.ww.js

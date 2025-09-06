@@ -107,6 +107,11 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_web_plugins:
+    dependency: transitive
+    description: flutter
+    source: sdk
+    version: "0.0.0"
   glob:
     dependency: transitive
     description:
@@ -131,6 +136,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.6.7"
+  js_interop_utils:
+    dependency: transitive
+    description:
+      name: js_interop_utils
+      sha256: "32c8bc0ac79fe9de66afa919663bbd51995200161793deaff5676db292ec5808"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.8"
   leak_tracker:
     dependency: transitive
     description:
@@ -201,28 +214,28 @@ packages:
       path: ".."
       relative: true
     source: path
-    version: "1.0.2"
+    version: "1.0.4"
   miniaudio_dart_ffi:
     dependency: transitive
     description:
       path: "../../miniaudio_dart_ffi"
       relative: true
     source: path
-    version: "1.0.2"
+    version: "1.0.4"
   miniaudio_dart_platform_interface:
     dependency: transitive
     description:
       path: "../../miniaudio_dart_platform_interface"
       relative: true
     source: path
-    version: "1.0.2"
+    version: "1.0.4"
   miniaudio_dart_web:
     dependency: transitive
     description:
       path: "../../miniaudio_dart_web"
       relative: true
     source: path
-    version: "1.0.2"
+    version: "1.0.4"
   native_toolchain_cmake:
     dependency: transitive
     description:

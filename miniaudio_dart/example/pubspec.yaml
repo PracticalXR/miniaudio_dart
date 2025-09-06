@@ -6,13 +6,14 @@ publish_to: none
 #####
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=3.6.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
   miniaudio_dart:
     path: ../
+    
 
 dev_dependencies:
   flutter_test:
@@ -26,3 +27,4 @@ flutter:
 
   assets:
     - assets/laser_shoot.wav
+

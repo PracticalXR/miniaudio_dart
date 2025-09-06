@@ -90,47 +90,45 @@ else()
         -fno-rtti
     )
     target_link_options(${TARGET_BASENAME} PRIVATE
-        -O2
+        -O1
         -flto
-        -sEXPORTED_FUNCTIONS=_malloc,_free
-        -sEXPORTED_RUNTIME_METHODS=ccall
+        -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPU8','HEAPU16','HEAPU32','HEAP8','HEAP16','HEAP32','HEAPF32','HEAPF64']
+        -sEXPORTED_FUNCTIONS=['_malloc','_free']
         -sALLOW_MEMORY_GROWTH
-        -sMAXIMUM_MEMORY=1gb
-        -sNO_DEFAULT_TO_CXX
-        -sNO_TEXTDECODER
-        -sFORCE_FILESYSTEM=1
-        -sNO_FETCH_SUPPORT_INDEXEDDB
+        -sINITIAL_MEMORY=64MB
+        -sMAXIMUM_MEMORY=1GB
+        -sSTACK_SIZE=16MB
+        # Worklets only if you need them; embedded as blobs with =1
         -sAUDIO_WORKLET=1
         -sWASM_WORKERS=1
         -sASYNCIFY
-        -sSTACK_SIZE=1mb
-        -sSTACK_OVERFLOW_CHECK
+        -DMA_ENABLE_AUDIO_WORKLETS 
     )
 
-    # Copy JS loader assets to web output
+    # Copy assets only; drop JS patching (no external .aw.js/.ww.js emitted with =1)
     file(GLOB JS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/js/*.js")
     add_custom_target(${TARGET_BASENAME}_assets ALL
         COMMAND ${CMAKE_COMMAND} -E make_directory "${WEB_OUTPUT_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${JS_SOURCES} "${WEB_OUTPUT_DIR}"
-        DEPENDS ${JS_SOURCES}
-        COMMENT "Copying JS loader assets to ${WEB_OUTPUT_DIR}"
+        COMMENT "Copying runtime JS assets (loader, etc.)"
     )
     add_dependencies(${TARGET_BASENAME} ${TARGET_BASENAME}_assets)
 
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/modify_js.cmake.in")
-        configure_file(
-            "${CMAKE_CURRENT_SOURCE_DIR}/modify_js.cmake.in"
-            "${CMAKE_CURRENT_BINARY_DIR}/modify_js.cmake"
-            @ONLY
-        )
-        add_custom_command(
-            TARGET ${TARGET_BASENAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E echo "Modifying ${TARGET_BASENAME}.js to use locateFile"
-            COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_BINARY_DIR}/modify_js.cmake"
-            WORKING_DIRECTORY "${WEB_OUTPUT_DIR}"
-            COMMENT "Post-processing ${TARGET_BASENAME}.js"
-        )
-    endif()
+    # Remove the modify_js step entirely
+    # if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/modify_js.cmake.in")
+    # endif()
+
+    # >>> NEW: Copy Emscripten outputs into Dart web package after build <<<
+    # Destination inside the Dart web package:
+    set(DART_WEB_BUILD_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../miniaudio_dart_web/lib/build"
+        CACHE PATH "Directory in Dart web package to receive Emscripten outputs")
+
+    add_custom_command(TARGET ${TARGET_BASENAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${DART_WEB_BUILD_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${WEB_OUTPUT_DIR}" "${DART_WEB_BUILD_DIR}"
+        COMMENT "Copying Emscripten outputs from ${WEB_OUTPUT_DIR} to ${DART_WEB_BUILD_DIR}"
+    )
 endif()
 
 # Additional libs
