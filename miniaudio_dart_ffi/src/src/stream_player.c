@@ -99,6 +99,12 @@ StreamPlayer* stream_player_alloc() {
     return sp;
 }
 
+void stream_player_free(StreamPlayer* self) {
+    if (self) {
+        ma_free(self, NULL);
+    }
+}
+
 int stream_player_init(StreamPlayer* self,
                        ma_engine* engine,
                        ma_format format, int channels, int sample_rate,

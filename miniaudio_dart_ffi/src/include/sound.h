@@ -20,6 +20,11 @@ typedef struct Sound {
     int  loop_delay_ms;
     SilenceDataSource loop_delay_ds;
 
+    // Stored metadata for rebind/reconstruction
+    ma_format original_format;   // format passed for raw PCM (ma_format_unknown for encoded)
+    int       channels;
+    int       sample_rate;
+
     // Own a copy of the input bytes for decoder/buffer lifetime
     void*  owned_data;
     size_t owned_size;
@@ -49,5 +54,8 @@ EXPORT float sound_get_duration(Sound *const self);
 
 EXPORT bool sound_get_is_looped(Sound const *const self);
 EXPORT void sound_set_looped(Sound *const self, bool const value, size_t const delay_ms);
+
+// Rebind to a new engine (device change)
+EXPORT int sound_rebind_engine(struct Sound* self, ma_engine* newEngine);
 
 #endif

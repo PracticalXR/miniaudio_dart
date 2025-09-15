@@ -13,14 +13,12 @@
 struct Engine
 {
     bool is_started;
-
     ma_engine engine;
     ma_decoder_config dec_config;
-
-    // New: device enumeration/cache
     ma_context context;
     PlaybackDeviceInfo* playbackInfos;
     ma_uint32 playbackCount;
+    ma_uint32 playbackGeneration; // NEW
 };
 
 static void engine_free_playback_cache(Engine* self) {
@@ -39,10 +37,15 @@ Engine *engine_alloc()
 {
     Engine *const engine = malloc(sizeof(Engine));
     if (engine) {
-        engine->playbackInfos = NULL;
-        engine->playbackCount = 0;
+        memset(engine, 0, sizeof(*engine));
     }
     return engine;
+}
+
+void engine_free(Engine* self) {
+    if (self) {
+        free(self);
+    }
 }
 
 int engine_init(Engine *const self, uint32_t const period_ms)
@@ -50,6 +53,7 @@ int engine_init(Engine *const self, uint32_t const period_ms)
     self->is_started = false;
     self->playbackInfos = NULL;
     self->playbackCount = 0;
+    self->playbackGeneration = 0; // NEW
 
     // Init a shared context so we can enumerate/select devices.
     ma_context_config ctxCfg = ma_context_config_init();
@@ -148,6 +152,7 @@ int engine_refresh_playback_devices(Engine* self) {
         dst->id = src->id; // struct copy
     }
     self->playbackCount = playbackCount;
+    self->playbackGeneration++; 
     return 1;
 }
 
@@ -206,11 +211,15 @@ int engine_select_playback_device_by_index(Engine* self, ma_uint32 index) {
         }
         self->is_started = true;
     }
+    self->playbackGeneration++; // NEW
     return 1;
 }
 
-ma_engine* engine_get_ma_engine(Engine *const self)
-{
-    if (self == NULL) return NULL;
+ma_engine* engine_get_ma_engine(Engine *self) {
+    if (!self) return NULL;
     return &self->engine;
+}
+
+ma_uint32 engine_get_playback_device_generation(Engine* self) {
+    return self ? self->playbackGeneration : 0;
 }

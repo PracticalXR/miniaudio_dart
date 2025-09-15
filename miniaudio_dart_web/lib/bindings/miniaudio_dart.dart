@@ -14,6 +14,7 @@ Object get _module => jsu.getProperty(jsu.globalThis, 'Module');
 
 // Engine functions
 int engine_alloc() => _engine_alloc();
+void engine_free(int self) => _engine_free(self);
 Future<int> engine_init(int self, int periodMs) => _engine_init(self, periodMs);
 void engine_uninit(int self) => _engine_uninit(self);
 int engine_start(int self) => _engine_start(self);
@@ -25,6 +26,8 @@ int engine_load_sound(int self, int sound, int data, int dataSize, int format,
 // Engine JS bindings
 @JS()
 external int _engine_alloc();
+@JS()
+external void _engine_free(int self);
 Future<int> _engine_init(int self, int periodMs) async {
   final promise = jsu.callMethod(
     _module,
@@ -83,6 +86,22 @@ external void _sound_set_volume(int self, double value);
 external double _sound_get_duration(int self);
 @JS()
 external void _sound_set_looped(int self, bool value, int delay_ms);
+
+@JS()
+external int _recorder_start(int self);
+@JS()
+external int _recorder_stop(int self);
+@JS()
+external int _recorder_get_available_frames(int self);
+@JS()
+external bool _recorder_is_recording(int self);
+@JS()
+external int _recorder_get_buffer(int self, int output, int floats_to_read);
+@JS()
+external int _recorder_commit_read_frames(int self, int frames);
+
+@JS()
+external void _recorder_destroy(int self);
 
 // Recorder functions
 int recorder_create() => _recorder_create();
@@ -153,18 +172,27 @@ Future<int> _recorder_init_stream(int self,
   return (res as num).toInt();
 }
 
+int recorder_acquire_read_region(int self, int outPtrAddr, int outFramesAddr) =>
+    _recorder_acquire_read_region(self, outPtrAddr, outFramesAddr);
+
+// New ccall wrapper (Emscripten) for recorder_acquire_read_region
+int _recorder_acquire_read_region(int self, int outPtrAddr, int outFramesAddr) {
+  final res = jsu.callMethod(
+    _module,
+    'ccall',
+    [
+      'recorder_acquire_read_region',
+      'number',
+      <String>['number', 'number', 'number'],
+      <Object?>[self, outPtrAddr, outFramesAddr],
+    ],
+  ) as num;
+  return res.toInt();
+}
+
 @JS()
-external int _recorder_start(int self);
-@JS()
-external int _recorder_stop(int self);
-@JS()
-external int _recorder_get_available_frames(int self);
-@JS()
-external bool _recorder_is_recording(int self);
-@JS()
-external int _recorder_get_buffer(int self, int output, int floats_to_read);
-@JS()
-external void _recorder_destroy(int self);
+int recorder_commit_read_frames(int self, int frames) =>
+    _recorder_commit_read_frames(self, frames);
 
 // Generator functions
 int generator_create() => _generator_create();
@@ -243,6 +271,7 @@ external void _generator_destroy(int self);
 
 // Stream player functions
 int stream_player_alloc() => _stream_player_alloc();
+void stream_player_free(int self) => _stream_player_free(self);
 int stream_player_init(int self, int engine, int format, int channels,
         int sampleRate, int bufferMs) =>
     _stream_player_init(self, engine, format, channels, sampleRate, bufferMs);
@@ -263,6 +292,8 @@ int stream_player_write_frames_f32(int self, int dataPtr, int frames) =>
 // JS glue (Emscripten ccall)
 @JS()
 external int _stream_player_alloc();
+@JS()
+external void _stream_player_free(int self);
 
 int _stream_player_init(int self, int engine, int format, int channels,
     int sampleRate, int bufferMs) {

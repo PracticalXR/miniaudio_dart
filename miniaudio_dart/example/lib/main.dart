@@ -42,6 +42,7 @@ class _ExamplePageState extends State<ExamplePage> {
   final List<Float32List> generatorBuffer = [];
   bool _monitorMuted = false;
   double _monitorVolume = 1.0;
+  bool _monitorEnabled = false;
 
   int totalRecordedFrames = 0;
   final List<Sound> sounds = [];
@@ -55,16 +56,18 @@ class _ExamplePageState extends State<ExamplePage> {
   void initState() {
     super.initState();
     soundFuture = _initializeSound();
-    // Load devices after engine init
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      try {
-        final list = await engine.enumeratePlaybackDevices(); // CHANGED
-        setState(() {
-          _playbackDevices = list;
+    // Start device watcher
+    engine
+        .playbackDeviceChanges(interval: const Duration(seconds: 2))
+        .listen((list) {
+      setState(() {
+        _playbackDevices = list;
+        if (_selectedPlaybackIndex >= list.length ||
+            _selectedPlaybackIndex < 0) {
           _selectedPlaybackIndex = list.indexWhere((e) => e.$2);
           if (_selectedPlaybackIndex < 0) _selectedPlaybackIndex = 0;
-        });
-      } catch (_) {}
+        }
+      });
     });
   }
 
@@ -75,6 +78,9 @@ class _ExamplePageState extends State<ExamplePage> {
       recorder = Recorder();
       generator = Generator();
       streamPlayer = StreamPlayer(mainEngine: engine);
+      await streamPlayer.init(channels: 1, sampleRate: 48000, bufferMs: 120);
+      streamPlayer.start();
+      _monitorEnabled = true;
     }
     return engine.loadSoundAsset("assets/laser_shoot.wav");
   }
@@ -225,6 +231,10 @@ class _ExamplePageState extends State<ExamplePage> {
                                   (_) => accumulateRecorderFrames(),
                                 );
                                 totalRecordedFrames = 0;
+                                if (!_monitorEnabled) {
+                                  await recorder.enableMonitoring(streamPlayer);
+                                  _monitorEnabled = true;
+                                }
                               }
                             },
                           ),
@@ -478,36 +488,17 @@ class _ExamplePageState extends State<ExamplePage> {
                                 onChanged: (idx) async {
                                   if (idx == null ||
                                       idx == _selectedPlaybackIndex) return;
-                                  // Stop active graph
-                                  try {
-                                    recorder.stop();
-                                  } catch (_) {}
-                                  try {
-                                    streamPlayer.stop();
-                                  } catch (_) {}
-                                  recorderTimer?.cancel();
-
-                                  // Switch device (native) or noop (web)
-                                  final ok =
-                                      await engine.selectPlaybackDeviceByIndex(
-                                          idx); // CHANGED
+                                  // Do NOT stop the recorder now; we want uninterrupted capture.
+                                  final ok = await engine
+                                      .switchPlaybackDevicePreservingMonitoring(
+                                    index: idx,
+                                    recorder: recorder,
+                                    monitorPlayer: streamPlayer,
+                                    rebindSounds: true,
+                                  );
                                   if (!ok) return;
-
-                                  // Recreate stream player bound to engine
-                                  try {
-                                    streamPlayer.dispose();
-                                  } catch (_) {}
-                                  streamPlayer =
-                                      StreamPlayer(mainEngine: engine);
-                                  _streamInit = false;
-
-                                  // Refresh device list after switch
-                                  final list =
-                                      await engine.enumeratePlaybackDevices();
-
                                   setState(() {
                                     _selectedPlaybackIndex = idx;
-                                    _playbackDevices = list;
                                   });
                                 },
                               ),
@@ -515,9 +506,9 @@ class _ExamplePageState extends State<ExamplePage> {
                                 tooltip: "Refresh devices",
                                 icon: const Icon(Icons.refresh),
                                 onPressed: () async {
-                                  final list =
+                                  final _ =
                                       await engine.enumeratePlaybackDevices();
-                                  setState(() => _playbackDevices = list);
+                                  // watcher stream will update state automatically.
                                 },
                               ),
                             ],
@@ -538,20 +529,18 @@ class _ExamplePageState extends State<ExamplePage> {
       );
 
   void accumulateRecorderFrames() {
-    if (recorder.isRecording) {
-      final frames = recorder.getAvailableFrames();
-      if (frames <= 0) return;
-      final buffer = recorder.getBuffer(frames);
-      if (buffer.isNotEmpty) {
-        recordingBuffer.add(buffer);
-        totalRecordedFrames += frames;
-        // Live monitor: write directly to the streaming player.
-        if (_streamInit) {
-          try {
-            streamPlayer.writeFloat32(buffer);
-          } catch (_) {
-            // ignore transient backpressure errors
-          }
+    if (!recorder.isRecording) return;
+    final framesAvail = recorder.getAvailableFrames();
+    if (framesAvail <= 0) return;
+    final chunk = recorder.readChunk(maxFrames: framesAvail);
+    if (chunk.isNotEmpty) {
+      recordingBuffer.add(chunk);
+      totalRecordedFrames += (chunk.length ~/ recorder.channels);
+      if (_monitorEnabled) {
+        try {
+          streamPlayer.writeFloat32(chunk);
+        } catch (e) {
+          debugPrint("Monitor write failed: $e");
         }
       }
     }

@@ -38,7 +38,7 @@ class MiniaudioDartFfi extends MiniaudioDartPlatformInterface {
     return FfiGenerator(self);
   }
 
-  // NEW: streaming player
+  // streaming player
   @override
   PlatformStreamPlayer createStreamPlayer({
     required PlatformEngine engine,
@@ -224,38 +224,49 @@ final class FfiEngine implements PlatformEngine {
   }
 
   Future<List<(String name, bool isDefault)>> enumeratePlaybackDevices() async {
-    final ok = bindings.engine_refresh_playback_devices(_self);
-    if (ok == 0) return const [];
+    // Refresh native cache
+    bindings.engine_refresh_playback_devices(_self);
     final count = bindings.engine_get_playback_device_count(_self);
-    final result = <(String, bool)>[];
-    final nameBuf = calloc<Char>(256);
-    final isDefPtr = calloc<bindings.ma_bool32>();
+    final results = <(String, bool)>[];
+    if (count == 0) return results;
+    // Temporary buffer for names
+    const cap = 256;
+    final nameBuf = calloc<Int8>(cap);
+    final isDefaultPtr = calloc<Uint8>();
     try {
       for (var i = 0; i < count; i++) {
-        final ok2 = bindings.engine_get_playback_device_name(
+        final ok = bindings.engine_get_playback_device_name(
           _self,
           i,
-          nameBuf,
-          256,
-          isDefPtr,
+          nameBuf.cast(),
+          cap,
+          isDefaultPtr.cast(),
         );
-        if (ok2 != 0) {
-          final name = nameBuf.cast<Utf8>().toDartString();
-          final isDef = isDefPtr.value;
-          result.add((name, isDef == 1));
-        }
+        if (ok == 0) continue;
+        final name = nameBuf.cast<Utf8>().toDartString();
+        final isDef = isDefaultPtr.value != 0;
+        results.add((name, isDef));
       }
     } finally {
       calloc.free(nameBuf);
-      calloc.free(isDefPtr);
+      calloc.free(isDefaultPtr);
     }
-    return result;
+    return results;
   }
 
   Future<bool> selectPlaybackDeviceByIndex(int index) async {
+    // IMPORTANT: Existing Sound / StreamPlayer objects tied to previous engine
+    // must be recreated after a successful switch.
     final ok = bindings.engine_select_playback_device_by_index(_self, index);
     return ok != 0;
   }
+
+  @override
+  int getPlaybackDeviceGeneration() =>
+      bindings.engine_get_playback_device_generation(_self);
+
+  Pointer<bindings.ma_engine> get _maEngine =>
+      bindings.engine_get_ma_engine(_self);
 }
 
 // sound ffi
@@ -313,6 +324,14 @@ final class FfiSound implements PlatformSound {
   void pause() => bindings.sound_pause(_self);
   @override
   void stop() => bindings.sound_stop(_self);
+
+  @override
+  bool rebindToEngine(PlatformEngine engine) {
+    if (engine is! FfiEngine) return false;
+    final nativeMaEngine = engine._maEngine; // Pointer<ma_engine>
+    final res = bindings.sound_rebind_engine(_self, nativeMaEngine);
+    return res == 1;
+  }
 }
 
 // recorder ffi
@@ -321,10 +340,13 @@ class FfiRecorder implements PlatformRecorder {
 
   final Pointer<bindings.Recorder> _self;
 
+  int _channels = 0;
+  int _sampleRate = 0;
+
   @override
   Future<void> initFile(
     String filename, {
-    int sampleRate = 44800,
+    int sampleRate = 48000,
     int channels = 1,
     int format = 4,
   }) async {
@@ -342,6 +364,8 @@ class FfiRecorder implements PlatformRecorder {
           "Failed to initialize recorder with file.",
         );
       }
+      _channels = channels;
+      _sampleRate = sampleRate;
     } finally {
       calloc.free(filenamePtr);
     }
@@ -349,23 +373,68 @@ class FfiRecorder implements PlatformRecorder {
 
   @override
   Future<void> initStream({
-    int sampleRate = 44800,
+    int sampleRate = 48000,
     int channels = 1,
-    int format = 4, // float32
+    int format = AudioFormat.float32,
     int bufferDurationSeconds = 5,
   }) async {
-    if (bindings.recorder_init_stream(
-          _self,
-          sampleRate,
-          channels,
-          bindings.ma_format.fromValue(format),
-          bufferDurationSeconds,
-        ) !=
-        bindings.RecorderResult.RECORDER_OK) {
+    final res = bindings.recorder_init_stream(
+      _self,
+      sampleRate,
+      channels,
+      bindings.ma_format.fromValue(format),
+      bufferDurationSeconds,
+    );
+    if (res != bindings.RecorderResult.RECORDER_OK) {
+      print("res=$res");
       throw MiniaudioDartPlatformException(
         "Failed to initialize recorder stream.",
       );
     }
+    _channels = channels;
+    _sampleRate = sampleRate;
+  }
+
+  @override
+  Float32List readChunk({int maxFrames = 512}) {
+    if (_channels == 0) return Float32List(0);
+    // Allocate native-sized pointer holder (address) and native int for frames.
+    final ptrOut = calloc<UintPtr>(); // pointer-sized integer
+    final framesOut = calloc<Int>(); // matches C 'int *'
+    try {
+      final ok = bindings.recorder_acquire_read_region(
+        _self,
+        ptrOut,
+        framesOut,
+      );
+      if (ok == 0) {
+        return Float32List(0);
+      }
+      final framesAvail = framesOut.value;
+      if (framesAvail <= 0) return Float32List(0);
+
+      final use = framesAvail > maxFrames ? maxFrames : framesAvail;
+      final addr = ptrOut.value;
+      if (addr == 0) return Float32List(0);
+
+      final floats = use * _channels;
+      final data = Float32List.fromList(
+        Pointer<Float>.fromAddress(addr).asTypedList(floats),
+      );
+
+      bindings.recorder_commit_read_frames(_self, use);
+      return data;
+    } finally {
+      calloc.free(ptrOut);
+      calloc.free(framesOut);
+    }
+  }
+
+  @override
+  Float32List getBuffer(int framesToRead) {
+    // delegate to readChunk for consistency
+    if (framesToRead <= 0) return Float32List(0);
+    return readChunk(maxFrames: framesToRead);
   }
 
   @override
@@ -385,35 +454,50 @@ class FfiRecorder implements PlatformRecorder {
   @override
   bool get isRecording => bindings.recorder_is_recording(_self);
 
-  Pointer<Float> bufferPtr = calloc.allocate<Float>(0);
-
-  @override
-  Float32List getBuffer(int framesToRead) {
-    // framesToRead is interpreted by the native side; the third argument is a count,
-    // not bytes. Allocate that many float elements and free after copying.
-    final int requested =
-        framesToRead; // native may treat this as frames or samples
-    final Pointer<Float> ptr = calloc<Float>(requested);
-    final int read = bindings.recorder_get_buffer(_self, ptr, requested);
-    if (read < 0) {
-      calloc.free(ptr);
-      throw MiniaudioDartPlatformException(
-        "Failed to get recorder buffer. Error code: $read",
-      );
-    }
-    // Copy out so we can free native memory immediately.
-    final out = Float32List.fromList(ptr.asTypedList(read));
-    calloc.free(ptr);
-    return out;
-  }
-
   @override
   int getAvailableFrames() => bindings.recorder_get_available_frames(_self);
 
   @override
-  void dispose() {
-    bindings.recorder_destroy(_self);
+  void dispose() => bindings.recorder_destroy(_self);
+
+  @override
+  Future<List<(String name, bool isDefault)>> enumerateCaptureDevices() async {
+    bindings.recorder_refresh_capture_devices(_self);
+    final count = bindings.recorder_get_capture_device_count(_self);
+    final out = <(String, bool)>[];
+    if (count == 0) return out;
+    final nameBuf = calloc<Int8>(256);
+    final defPtr = calloc<Uint8>();
+    try {
+      for (var i = 0; i < count; i++) {
+        final ok = bindings.recorder_get_capture_device_name(
+          _self,
+          i,
+          nameBuf.cast(),
+          256,
+          defPtr.cast(),
+        );
+        if (ok == 0) continue;
+        final name = nameBuf.cast<Utf8>().toDartString();
+        final isDef = defPtr.value != 0;
+        out.add((name, isDef));
+      }
+    } finally {
+      calloc.free(nameBuf);
+      calloc.free(defPtr);
+    }
+    return out;
   }
+
+  @override
+  Future<bool> selectCaptureDeviceByIndex(int index) async {
+    final ok = bindings.recorder_select_capture_device_by_index(_self, index);
+    return ok == 1;
+  }
+
+  @override
+  int getCaptureDeviceGeneration() =>
+      bindings.recorder_get_capture_device_generation(_self);
 }
 
 // generator ffi
@@ -434,7 +518,7 @@ class FfiGenerator implements PlatformGenerator {
   }
 
   @override
-  Future<int> init(
+  Future<void> init(
     int format,
     int channels,
     int sampleRate,
@@ -452,7 +536,6 @@ class FfiGenerator implements PlatformGenerator {
         "Failed to initialize generator. Error code: $result",
       );
     }
-    return result.value;
   }
 
   @override

@@ -10,6 +10,8 @@ import 'package:js_interop_utils/js_interop_utils.dart';
 external JSUint8Array HEAPU8;
 @JS('HEAPF32')
 external JSFloat32Array HEAPF32;
+@JS('HEAP32')
+external JSInt32Array HEAP32;
 
 // malloc/free
 @JS('_malloc')
@@ -28,7 +30,7 @@ void copyBytes(int destPtr, ByteBuffer buffer) {
   heap.setRange(destPtr, destPtr + src.length, src);
 }
 
-// NEW: copy bytes from a typed view (respects offset and length)
+// copy bytes from a typed view (respects offset and length)
 void copyFromTypedData(int destPtr, TypedData view) {
   final src = view.buffer.asUint8List(view.offsetInBytes, view.lengthInBytes);
   final heap = HEAPU8.toDart;
@@ -41,3 +43,6 @@ Float32List readF32(int ptr, int count) {
   final view = HEAPF32.toDart;
   return Float32List.fromList(view.sublist(ptr >> 2, (ptr >> 2) + count));
 }
+
+// Helper to read a 32-bit signed int (pointer/frame counts)
+int readI32(int addr) => HEAP32.toDart[addr >> 2];

@@ -93,7 +93,7 @@ else()
     target_link_options(${TARGET_BASENAME} PRIVATE
         -O3
         -flto
-        -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPU8','HEAPF32','HEAPF64']
+        -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPU8','HEAPF32','HEAPF64','HEAP32']
         # Export your C entry points (leading underscores)
         -sEXPORTED_FUNCTIONS=['_malloc','_free']
         -sALLOW_MEMORY_GROWTH
@@ -119,7 +119,7 @@ else()
     # if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/modify_js.cmake.in")
     # endif()
 
-    # >>> NEW: Copy Emscripten outputs into Dart web package after build <<<
+    # >>> Copy Emscripten outputs into Dart web package after build <<<
     # Destination inside the Dart web package:
     set(DART_WEB_BUILD_DIR
         "${CMAKE_CURRENT_SOURCE_DIR}/../../miniaudio_dart_web/lib/build"

@@ -41,18 +41,18 @@ abstract interface class PlatformEngine {
   factory PlatformEngine() =>
       MiniaudioDartPlatformInterface.instance.createEngine();
 
-  EngineState state = EngineState.uninit;
-
   Future<void> init(int periodMs);
-  void dispose();
-
   void start();
+  void dispose();
 
   Future<PlatformSound> loadSound(AudioData audioData);
 
   // output devices
   Future<List<(String name, bool isDefault)>> enumeratePlaybackDevices();
   Future<bool> selectPlaybackDeviceByIndex(int index);
+
+  // generation counter that increments whenever playback devices are refreshed or switched.
+  int getPlaybackDeviceGeneration();
 }
 
 typedef PlatformSoundLooping = (bool isLooped, int delayMs);
@@ -60,18 +60,17 @@ typedef PlatformSoundLooping = (bool isLooped, int delayMs);
 abstract interface class PlatformSound {
   double get volume;
   set volume(double value);
-
   double get duration;
-
   PlatformSoundLooping get looping;
   set looping(PlatformSoundLooping value);
-
-  void unload();
-
   void play();
   void replay();
   void pause();
   void stop();
+  void unload();
+
+  // optional engine rebind hook (device switch). Default no-op.
+  bool rebindToEngine(PlatformEngine engine) => false;
 }
 
 abstract interface class PlatformRecorder {
@@ -80,21 +79,35 @@ abstract interface class PlatformRecorder {
 
   Future<void> initFile(
     String filename, {
-    int sampleRate = 44800,
+    int sampleRate = 48000, // normalized
     int channels = 1,
     int format = AudioFormat.float32,
   });
+
   Future<void> initStream({
-    int sampleRate = 44800,
+    int sampleRate = 48000,
     int channels = 1,
     int format = AudioFormat.float32,
     int bufferDurationSeconds = 5,
   });
+
   void start();
   void stop();
   int getAvailableFrames();
   bool get isRecording;
+
+  /// Preferred API: pull up to maxFrames frames using ring buffer acquire/commit.
+  /// Returns 0-length list if none available. Implementations should NOT block.
+  Float32List readChunk({int maxFrames = 512});
+
+  /// Legacy API (may be deprecated in future). Implementations may map this
+  /// to readChunk internally.
   Float32List getBuffer(int framesToRead);
+
+  Future<List<(String name, bool isDefault)>> enumerateCaptureDevices();
+  Future<bool> selectCaptureDeviceByIndex(int index);
+  int getCaptureDeviceGeneration();
+
   void dispose();
 }
 

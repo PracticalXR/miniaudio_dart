@@ -142,8 +142,24 @@ external void sound_set_looped(
   int delay_ms,
 );
 
+@ffi.Native<ffi.Int Function(ffi.Pointer<Sound>, ffi.Pointer<ma_engine>)>()
+external int sound_rebind_engine(
+  ffi.Pointer<Sound> self,
+  ffi.Pointer<ma_engine> newEngine,
+);
+
+@ffi.Native<ma_uint32 Function(ffi.Pointer<Engine>)>()
+external int engine_get_playback_device_generation(
+  ffi.Pointer<Engine> self,
+);
+
 @ffi.Native<ffi.Pointer<Engine> Function()>()
 external ffi.Pointer<Engine> engine_alloc();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<Engine>)>()
+external void engine_free(
+  ffi.Pointer<Engine> self,
+);
 
 @ffi.Native<ffi.Int Function(ffi.Pointer<Engine>, ffi.Uint32)>()
 external int engine_init(
@@ -199,11 +215,6 @@ int engine_load_sound(
       channels,
     );
 
-@ffi.Native<ffi.Pointer<ma_engine> Function(ffi.Pointer<Engine>)>()
-external ffi.Pointer<ma_engine> engine_get_ma_engine(
-  ffi.Pointer<Engine> self,
-);
-
 @ffi.Native<ffi.Int Function(ffi.Pointer<Engine>)>()
 external int engine_refresh_playback_devices(
   ffi.Pointer<Engine> self,
@@ -229,6 +240,11 @@ external int engine_get_playback_device_name(
 external int engine_select_playback_device_by_index(
   ffi.Pointer<Engine> self,
   int index,
+);
+
+@ffi.Native<ffi.Pointer<ma_engine> Function(ffi.Pointer<Engine>)>()
+external ffi.Pointer<ma_engine> engine_get_ma_engine(
+  ffi.Pointer<Engine> self,
 );
 
 @ffi.Native<ffi.Int Function(ffi.Pointer<CircularBuffer>, ffi.Size)>()
@@ -278,8 +294,8 @@ external int circular_buffer_read_available(
 external ffi.Pointer<Recorder> recorder_create();
 
 @ffi.Native<
-    ffi.UnsignedInt Function(ffi.Pointer<Recorder>, ffi.Pointer<ffi.Char>,
-        ffi.Int, ffi.Int, ffi.UnsignedInt)>(symbol: 'recorder_init_file')
+    ffi.Int Function(ffi.Pointer<Recorder>, ffi.Pointer<ffi.Char>, ffi.Int,
+        ffi.Int, ffi.UnsignedInt)>(symbol: 'recorder_init_file')
 external int _recorder_init_file(
   ffi.Pointer<Recorder> recorder,
   ffi.Pointer<ffi.Char> filename,
@@ -304,8 +320,8 @@ RecorderResult recorder_init_file(
     ));
 
 @ffi.Native<
-    ffi.UnsignedInt Function(ffi.Pointer<Recorder>, ffi.Int, ffi.Int,
-        ffi.UnsignedInt, ffi.Int)>(symbol: 'recorder_init_stream')
+    ffi.Int Function(ffi.Pointer<Recorder>, ffi.Int, ffi.Int, ffi.UnsignedInt,
+        ffi.Int)>(symbol: 'recorder_init_stream')
 external int _recorder_init_stream(
   ffi.Pointer<Recorder> recorder,
   int sample_rate,
@@ -329,8 +345,7 @@ RecorderResult recorder_init_stream(
       buffer_duration_seconds,
     ));
 
-@ffi.Native<ffi.UnsignedInt Function(ffi.Pointer<Recorder>)>(
-    symbol: 'recorder_start')
+@ffi.Native<ffi.Int Function(ffi.Pointer<Recorder>)>(symbol: 'recorder_start')
 external int _recorder_start(
   ffi.Pointer<Recorder> recorder,
 );
@@ -342,8 +357,7 @@ RecorderResult recorder_start(
       recorder,
     ));
 
-@ffi.Native<ffi.UnsignedInt Function(ffi.Pointer<Recorder>)>(
-    symbol: 'recorder_stop')
+@ffi.Native<ffi.Int Function(ffi.Pointer<Recorder>)>(symbol: 'recorder_stop')
 external int _recorder_stop(
   ffi.Pointer<Recorder> recorder,
 );
@@ -357,6 +371,11 @@ RecorderResult recorder_stop(
 
 @ffi.Native<ffi.Int Function(ffi.Pointer<Recorder>)>()
 external int recorder_get_available_frames(
+  ffi.Pointer<Recorder> recorder,
+);
+
+@ffi.Native<ffi.Int Function(ffi.Pointer<Recorder>)>()
+external int recorder_get_available_frames_rb(
   ffi.Pointer<Recorder> recorder,
 );
 
@@ -376,6 +395,53 @@ external bool recorder_is_recording(
 @ffi.Native<ffi.Void Function(ffi.Pointer<Recorder>)>()
 external void recorder_destroy(
   ffi.Pointer<Recorder> recorder,
+);
+
+@ffi.Native<
+    ffi.Int Function(ffi.Pointer<Recorder>, ffi.Pointer<ffi.UintPtr>,
+        ffi.Pointer<ffi.Int>)>()
+external int recorder_acquire_read_region(
+  ffi.Pointer<Recorder> r,
+  ffi.Pointer<ffi.UintPtr> outPtr,
+  ffi.Pointer<ffi.Int> outFrames,
+);
+
+@ffi.Native<ffi.Int Function(ffi.Pointer<Recorder>, ffi.Int)>()
+external int recorder_commit_read_frames(
+  ffi.Pointer<Recorder> r,
+  int frames,
+);
+
+@ffi.Native<ffi.Int Function(ffi.Pointer<Recorder>)>()
+external int recorder_refresh_capture_devices(
+  ffi.Pointer<Recorder> r,
+);
+
+@ffi.Native<ma_uint32 Function(ffi.Pointer<Recorder>)>()
+external int recorder_get_capture_device_count(
+  ffi.Pointer<Recorder> r,
+);
+
+@ffi.Native<
+    ffi.Int Function(ffi.Pointer<Recorder>, ma_uint32, ffi.Pointer<ffi.Char>,
+        ma_uint32, ffi.Pointer<ma_bool32>)>()
+external int recorder_get_capture_device_name(
+  ffi.Pointer<Recorder> r,
+  int index,
+  ffi.Pointer<ffi.Char> outName,
+  int capName,
+  ffi.Pointer<ma_bool32> pIsDefault,
+);
+
+@ffi.Native<ffi.Int Function(ffi.Pointer<Recorder>, ma_uint32)>()
+external int recorder_select_capture_device_by_index(
+  ffi.Pointer<Recorder> r,
+  int index,
+);
+
+@ffi.Native<ma_uint32 Function(ffi.Pointer<Recorder>)>()
+external int recorder_get_capture_device_generation(
+  ffi.Pointer<Recorder> r,
 );
 
 @ffi.Native<ffi.Pointer<Generator> Function()>()
@@ -4787,6 +4853,17 @@ final class Sound extends ffi.Struct {
 
   external SilenceDataSource loop_delay_ds;
 
+  @ffi.UnsignedInt()
+  external int original_formatAsInt;
+
+  ma_format get original_format => ma_format.fromValue(original_formatAsInt);
+
+  @ffi.Int()
+  external int channels;
+
+  @ffi.Int()
+  external int sample_rate;
+
   external ffi.Pointer<ffi.Void> owned_data;
 
   @ffi.Size()
@@ -4799,10 +4876,10 @@ final class PlaybackDeviceInfo extends ffi.Struct {
   @ffi.Array.multi([256])
   external ffi.Array<ffi.Char> name;
 
+  external ma_device_id id;
+
   @ma_bool32()
   external int isDefault;
-
-  external ma_device_id id;
 }
 
 final class CircularBuffer extends ffi.Struct {
@@ -4816,6 +4893,16 @@ final class CircularBuffer extends ffi.Struct {
 
   @ffi.Size()
   external int read_pos;
+}
+
+final class CaptureDeviceInfo extends ffi.Struct {
+  @ffi.Array.multi([256])
+  external ffi.Array<ffi.Char> name;
+
+  external ma_device_id id;
+
+  @ma_bool32()
+  external int isDefault;
 }
 
 enum ma_encoding_format {
@@ -4954,6 +5041,11 @@ final class Recorder extends ffi.Struct {
 
   external CircularBuffer circular_buffer;
 
+  external ma_pcm_rb rb;
+
+  @ma_uint32()
+  external int frameSize;
+
   @ffi.Int()
   external int sample_rate;
 
@@ -4974,30 +5066,43 @@ final class Recorder extends ffi.Struct {
   external int encode_buffer_used;
 
   external ffi.Pointer<ffi.Void> user_data;
+
+  external ma_context context;
+
+  @ffi.Bool()
+  external bool context_initialized;
+
+  external ffi.Pointer<CaptureDeviceInfo> captureInfos;
+
+  @ma_uint32()
+  external int captureCount;
+
+  @ma_uint32()
+  external int captureGeneration;
 }
 
 enum RecorderResult {
-  RECORDER_OK(0),
-  RECORDER_ERROR_UNKNOWN(1),
-  RECORDER_ERROR_OUT_OF_MEMORY(2),
-  RECORDER_ERROR_INVALID_ARGUMENT(3),
-  RECORDER_ERROR_ALREADY_RECORDING(4),
-  RECORDER_ERROR_NOT_RECORDING(5),
-  RECORDER_ERROR_INVALID_FORMAT(6),
-  RECORDER_ERROR_INVALID_CHANNELS(7);
+  RECORDER_OK(1),
+  RECORDER_ERROR_UNKNOWN(-1),
+  RECORDER_ERROR_OUT_OF_MEMORY(-2),
+  RECORDER_ERROR_INVALID_ARGUMENT(-3),
+  RECORDER_ERROR_ALREADY_RECORDING(-4),
+  RECORDER_ERROR_NOT_RECORDING(-5),
+  RECORDER_ERROR_INVALID_FORMAT(-6),
+  RECORDER_ERROR_INVALID_CHANNELS(-7);
 
   final int value;
   const RecorderResult(this.value);
 
   static RecorderResult fromValue(int value) => switch (value) {
-        0 => RECORDER_OK,
-        1 => RECORDER_ERROR_UNKNOWN,
-        2 => RECORDER_ERROR_OUT_OF_MEMORY,
-        3 => RECORDER_ERROR_INVALID_ARGUMENT,
-        4 => RECORDER_ERROR_ALREADY_RECORDING,
-        5 => RECORDER_ERROR_NOT_RECORDING,
-        6 => RECORDER_ERROR_INVALID_FORMAT,
-        7 => RECORDER_ERROR_INVALID_CHANNELS,
+        1 => RECORDER_OK,
+        -1 => RECORDER_ERROR_UNKNOWN,
+        -2 => RECORDER_ERROR_OUT_OF_MEMORY,
+        -3 => RECORDER_ERROR_INVALID_ARGUMENT,
+        -4 => RECORDER_ERROR_ALREADY_RECORDING,
+        -5 => RECORDER_ERROR_NOT_RECORDING,
+        -6 => RECORDER_ERROR_INVALID_FORMAT,
+        -7 => RECORDER_ERROR_INVALID_CHANNELS,
         _ => throw ArgumentError('Unknown value for RecorderResult: $value'),
       };
 }

@@ -25,7 +25,10 @@ int sound_init(
     self->owned_data = NULL;
     self->owned_size = 0;
 
-    // Always make an internal copy so the data source has stable memory.
+    self->original_format = format;      // may be ma_format_unknown for encoded
+    self->channels        = channels;
+    self->sample_rate     = sample_rate;
+
     if (data != NULL && data_size > 0) {
         self->owned_data = malloc(data_size);
         if (self->owned_data == NULL) return 0;
@@ -35,10 +38,8 @@ int sound_init(
 
     if (format != ma_format_unknown && channels > 0 && sample_rate > 0)
     {
-        // RAW PCM path: use ma_audio_buffer so the engine can resample to its rate.
         self->is_raw_data = true;
 
-        // Compute frame count from byte size.
         ma_uint32 bps = (ma_uint32)ma_get_bytes_per_sample(format);
         ma_uint32 ch  = (ma_uint32)channels;
         ma_uint64 frames = 0;
@@ -48,12 +49,7 @@ int sound_init(
         }
 
         ma_audio_buffer_config cfg =
-            ma_audio_buffer_config_init(
-                format,
-                ch,
-                frames,                 // sizeInFrames
-                self->owned_data,       // pData
-                NULL);                  // pAllocationCallbacks
+            ma_audio_buffer_config_init(format, ch, frames, self->owned_data, NULL);
 
         if (ma_audio_buffer_init(&cfg, &self->buffer) != MA_SUCCESS) {
             free(self->owned_data); self->owned_data = NULL; self->owned_size = 0;
@@ -73,8 +69,8 @@ int sound_init(
     }
     else
     {
-        // Encoded audio path (WAV/OGG/etc.)
         self->is_raw_data = false;
+        // For encoded data we set original_format to unknown already above.
 
         if (ma_decoder_init_memory(self->owned_data, self->owned_size, NULL, &self->decoder) != MA_SUCCESS) {
             free(self->owned_data); self->owned_data = NULL; self->owned_size = 0;
@@ -218,4 +214,75 @@ void sound_set_looped(
     ma_data_source_set_looping(src, false); // chaining handles the loop
     ma_data_source_set_next(src, (ma_data_source*)&self->loop_delay_ds);
     ma_data_source_set_next((ma_data_source*)&self->loop_delay_ds, src);
+}
+
+int sound_rebind_engine(Sound *self, ma_engine *newEngine)
+{
+    if (!self || !newEngine) return 0;
+
+    float    vol      = ma_sound_get_volume(&self->sound);
+    ma_bool32 playing = ma_sound_is_playing(&self->sound);
+    ma_uint64 cursor  = 0;
+    ma_sound_get_cursor_in_pcm_frames(&self->sound, &cursor);
+    ma_bool32 looped  = self->is_looped ? MA_TRUE : MA_FALSE;
+    int      loopDelay = self->loop_delay_ms;
+
+    if (self->is_raw_data) {
+        ma_sound_uninit(&self->sound);
+        ma_audio_buffer_uninit(&self->buffer);
+
+        ma_format fmt = self->original_format;
+        if (fmt == ma_format_unknown) {
+            // Fallback safeguard
+            fmt = ma_format_f32;
+        }
+        ma_uint32 ch = (ma_uint32)(self->channels > 0 ? self->channels : 2);
+
+        ma_uint32 bps = (ma_uint32)ma_get_bytes_per_sample(fmt);
+        ma_uint64 frames = 0;
+        if (bps != 0 && ch != 0) {
+            frames = (ma_uint64)(self->owned_size / ((ma_uint64)bps * ch));
+        }
+
+        ma_audio_buffer_config cfg =
+            ma_audio_buffer_config_init(fmt, ch, frames, self->owned_data, NULL);
+
+        if (ma_audio_buffer_init(&cfg, &self->buffer) != MA_SUCCESS) return 0;
+
+        if (ma_sound_init_from_data_source(newEngine,
+                                           (ma_data_source*)&self->buffer,
+                                           MA_SOUND_FLAG_NO_PITCH | MA_SOUND_FLAG_NO_SPATIALIZATION,
+                                           NULL, &self->sound) != MA_SUCCESS) {
+            ma_audio_buffer_uninit(&self->buffer);
+            return 0;
+        }
+    } else {
+        ma_sound_uninit(&self->sound);
+        ma_decoder_uninit(&self->decoder);
+
+        if (ma_decoder_init_memory(self->owned_data, self->owned_size, NULL, &self->decoder) != MA_SUCCESS)
+            return 0;
+
+        if (ma_sound_init_from_data_source(newEngine,
+                                           (ma_data_source*)&self->decoder,
+                                           MA_SOUND_FLAG_NO_PITCH | MA_SOUND_FLAG_NO_SPATIALIZATION,
+                                           NULL, &self->sound) != MA_SUCCESS) {
+            ma_decoder_uninit(&self->decoder);
+            return 0;
+        }
+    }
+
+    self->engine = newEngine;
+
+    ma_sound_set_volume(&self->sound, vol);
+    if (looped) {
+        sound_set_looped(self, true, (size_t)loopDelay);
+    }
+    if (cursor > 0) {
+        ma_sound_seek_to_pcm_frame(&self->sound, cursor);
+    }
+    if (playing) {
+        ma_sound_start(&self->sound);
+    }
+    return 1;
 }
