@@ -41,6 +41,7 @@ int sound_init(
     const int sample_rate,
     ma_engine *const engine);
 EXPORT void sound_unload(Sound *const self);
+EXPORT void sound_free(Sound *self);
 
 EXPORT int sound_play(Sound *const self);
 EXPORT int sound_replay(Sound *const self);

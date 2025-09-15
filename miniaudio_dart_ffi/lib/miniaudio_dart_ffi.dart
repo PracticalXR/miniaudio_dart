@@ -155,15 +155,15 @@ final class FfiStreamPlayer implements PlatformStreamPlayer {
       _scratchFloats = 0;
     }
     bindings.stream_player_uninit(_self);
-    // Do not free _self with calloc; add and call a native stream_player_free() if available.
+    bindings.stream_player_free(_self); // NEW
   }
 }
 
 // engine ffi
 final class FfiEngine implements PlatformEngine {
-  FfiEngine(Pointer<bindings.Engine> self) : _self = self;
-
+  FfiEngine(this._self);
   final Pointer<bindings.Engine> _self;
+  bool _disposed = false;
 
   @override
   EngineState state = EngineState.uninit;
@@ -177,8 +177,10 @@ final class FfiEngine implements PlatformEngine {
 
   @override
   void dispose() {
+    if (_disposed) return;
     bindings.engine_uninit(_self);
-    calloc.free(_self);
+    bindings.engine_free(_self); // correct native free
+    _disposed = true;
   }
 
   @override
@@ -305,7 +307,10 @@ final class FfiSound implements PlatformSound {
   @override
   void unload() {
     bindings.sound_unload(_self);
-    calloc.free(_data);
+    if (_data != nullptr) {
+      calloc.free(_data); // only the temporary PCM copy
+    }
+    bindings.sound_free(_self); // NEW
   }
 
   @override

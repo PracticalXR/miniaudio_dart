@@ -94,6 +94,11 @@ external void sound_unload(
   ffi.Pointer<Sound> self,
 );
 
+@ffi.Native<ffi.Void Function(ffi.Pointer<Sound>)>()
+external void sound_free(
+  ffi.Pointer<Sound> self,
+);
+
 @ffi.Native<ffi.Int Function(ffi.Pointer<Sound>)>()
 external int sound_play(
   ffi.Pointer<Sound> self,
@@ -444,6 +449,11 @@ external int recorder_get_capture_device_generation(
   ffi.Pointer<Recorder> r,
 );
 
+@ffi.Native<ffi.Void Function(ffi.Pointer<Recorder>)>()
+external void recorder_free_capture_cache(
+  ffi.Pointer<Recorder> r,
+);
+
 @ffi.Native<ffi.Pointer<Generator> Function()>()
 external ffi.Pointer<Generator> generator_create();
 
@@ -599,6 +609,11 @@ external int generator_get_available_frames(
 
 @ffi.Native<ffi.Pointer<StreamPlayer> Function()>()
 external ffi.Pointer<StreamPlayer> stream_player_alloc();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<StreamPlayer>)>()
+external void stream_player_free(
+  ffi.Pointer<StreamPlayer> self,
+);
 
 @ffi.Native<
     ffi.Int Function(

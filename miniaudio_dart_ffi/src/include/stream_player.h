@@ -5,11 +5,12 @@
 #include <stdint.h>
 #include "../external/miniaudio/include/miniaudio.h"
 #include "export.h"
-#include "engine.h"  // for Engine*
+#include "engine.h"
 
 typedef struct StreamPlayer StreamPlayer;
 
 EXPORT StreamPlayer* stream_player_alloc();
+EXPORT void          stream_player_free(StreamPlayer* self);
 EXPORT int  stream_player_init(StreamPlayer* self,
                                ma_engine* engine,
                                ma_format format, int channels, int sample_rate,
@@ -30,5 +31,4 @@ EXPORT void stream_player_set_volume(StreamPlayer* self, float volume);
 EXPORT size_t stream_player_write_frames_f32(StreamPlayer* self,
                                              const float* interleaved,
                                              size_t frames);
-
-#endif // STREAM_PLAYER_H
+#endif
