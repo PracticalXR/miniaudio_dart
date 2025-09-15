@@ -93,5 +93,6 @@ EXPORT int       recorder_get_capture_device_name(Recorder* r,
 EXPORT int       recorder_select_capture_device_by_index(Recorder* r, ma_uint32 index);
 /* Generation counter (increments when devices refreshed or switched) */
 EXPORT ma_uint32 recorder_get_capture_device_generation(Recorder* r);
+EXPORT void recorder_free_capture_cache(Recorder* r);
 
 #endif // RECORD_H

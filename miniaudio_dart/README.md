@@ -111,6 +111,7 @@ sound.pause();  // Keeps position (loop disabled)
 ### Rebinding sounds after device change
 
 Performed automatically by:
+
 - `switchPlaybackDeviceAndRebuild`
 - `switchPlaybackDevicePreservingMonitoring (rebindSounds: true)`
 

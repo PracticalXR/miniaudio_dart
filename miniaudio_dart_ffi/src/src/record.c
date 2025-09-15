@@ -321,7 +321,7 @@ int recorder_refresh_capture_devices(Recorder* r) {
         CaptureDeviceInfo* dst = &r->captureInfos[i];
         ma_device_info* src = &pCapture[i];
         memset(dst, 0, sizeof(*dst));
-        strncpy(dst->name, src->name, MA_DEVICE_NAME_LENGTH - 1);
+        strncpy(dst->name, src->name, 256 - 1);
         dst->id = src->id;
         dst->isDefault = src->isDefault;
     }
