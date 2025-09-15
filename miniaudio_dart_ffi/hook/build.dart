@@ -14,6 +14,7 @@ void main(List<String> args) async {
       input,
       names: {'miniaudio_dart_ffi': 'miniaudio_dart_ffi_bindings.dart'},
     );
+    print(miniaudioDartLib);
     final assets = <List<dynamic>>[miniaudioDartLib];
 
     for (final assetList in assets) {

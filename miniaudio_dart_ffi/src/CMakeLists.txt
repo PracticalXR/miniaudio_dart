@@ -20,6 +20,7 @@ set(MAIN_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/record.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/silence_data_source.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/sound.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/stream_player.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/miniaudio/src/miniaudio.c"
 )
 
@@ -85,24 +86,24 @@ else()
         OUTPUT_NAME "${TARGET_BASENAME}"
     )
     target_compile_options(${TARGET_BASENAME} PRIVATE
-        -O2
+        -O3
         -flto
         -fno-rtti
     )
     target_link_options(${TARGET_BASENAME} PRIVATE
-        -O1
+        -O3
         -flto
-        -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPU8','HEAPU16','HEAPU32','HEAP8','HEAP16','HEAP32','HEAPF32','HEAPF64']
+        -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPU8','HEAPF32','HEAPF64']
+        # Export your C entry points (leading underscores)
         -sEXPORTED_FUNCTIONS=['_malloc','_free']
         -sALLOW_MEMORY_GROWTH
         -sINITIAL_MEMORY=64MB
         -sMAXIMUM_MEMORY=1GB
         -sSTACK_SIZE=16MB
-        # Worklets only if you need them; embedded as blobs with =1
         -sAUDIO_WORKLET=1
         -sWASM_WORKERS=1
         -sASYNCIFY
-        -DMA_ENABLE_AUDIO_WORKLETS 
+        -DMA_ENABLE_AUDIO_WORKLETS
     )
 
     # Copy assets only; drop JS patching (no external .aw.js/.ww.js emitted with =1)

@@ -6,13 +6,11 @@
 library miniaudio_dart;
 
 import "package:js/js.dart";
-import "package:js/js_util.dart";
+import "package:js/js_util.dart" as jsu;
 import "package:miniaudio_dart_platform_interface/miniaudio_dart_platform_interface.dart";
 
-// JS interop
-@JS("ccall")
-external dynamic _ccall(
-    String name, String returnType, List<String> argTypes, List args, Map opts);
+// Helper to get Module
+Object get _module => jsu.getProperty(jsu.globalThis, 'Module');
 
 // Engine functions
 int engine_alloc() => _engine_alloc();
@@ -27,9 +25,22 @@ int engine_load_sound(int self, int sound, int data, int dataSize, int format,
 // Engine JS bindings
 @JS()
 external int _engine_alloc();
-Future<int> _engine_init(int self, int periodMs) async =>
-    promiseToFuture(_ccall("engine_init", "number", ["number", "number"],
-        [self, periodMs], {"async": true}));
+Future<int> _engine_init(int self, int periodMs) async {
+  final promise = jsu.callMethod(
+    _module,
+    'ccall',
+    [
+      'engine_init',
+      'number',
+      <String>['number', 'number'],
+      <Object?>[self, periodMs],
+      jsu.jsify({'async': true}),
+    ],
+  );
+  final res = await jsu.promiseToFuture(promise);
+  return (res as num).toInt();
+}
+
 @JS()
 external void _engine_uninit(int self);
 @JS()
@@ -71,19 +82,18 @@ external void _sound_set_volume(int self, double value);
 @JS()
 external double _sound_get_duration(int self);
 @JS()
-external void _sound_set_looped(
-    int self, bool value, int delay_ms); // FIX: void
+external void _sound_set_looped(int self, bool value, int delay_ms);
 
 // Recorder functions
 int recorder_create() => _recorder_create();
 Future<int> recorder_init_file(int self, String filename,
-        {int sampleRate = 44800,
+        {int sampleRate = 48000,
         int channels = 1,
         int format = AudioFormat.float32}) =>
     _recorder_init_file(self, filename,
         sampleRate: sampleRate, channels: channels, format: format);
 Future<int> recorder_init_stream(int self,
-        {int sampleRate = 44800,
+        {int sampleRate = 48000,
         int channels = 1,
         int format = AudioFormat.float32,
         int bufferDurationSeconds = 5}) =>
@@ -97,34 +107,51 @@ int recorder_stop(int self) => _recorder_stop(self);
 int recorder_get_available_frames(int self) =>
     _recorder_get_available_frames(self);
 bool recorder_is_recording(int self) => _recorder_is_recording(self);
-int recorder_get_buffer(int self, int output, int frames_to_read) =>
-    _recorder_get_buffer(self, output, frames_to_read);
+int recorder_get_buffer(int self, int output, int floats_to_read) =>
+    _recorder_get_buffer(self, output, floats_to_read);
 void recorder_destroy(int self) => _recorder_destroy(self);
 
 // Recorder JS bindings
 @JS()
 external int _recorder_create();
 Future<int> _recorder_init_file(int self, String filename,
-        {int sampleRate = 44800,
-        int channels = 1,
-        int format = AudioFormat.float32}) async =>
-    promiseToFuture(_ccall(
-        "recorder_init_file",
-        "number",
-        ["number", "string", "number", "number", "number"],
-        [self, filename, sampleRate, channels, format],
-        {"async": true}));
+    {int sampleRate = 48000,
+    int channels = 1,
+    int format = AudioFormat.float32}) async {
+  final promise = jsu.callMethod(
+    _module,
+    'ccall',
+    [
+      'recorder_init_file',
+      'number',
+      <String>['number', 'string', 'number', 'number', 'number'],
+      <Object?>[self, filename, sampleRate, channels, format],
+      jsu.jsify({'async': true}),
+    ],
+  );
+  final res = await jsu.promiseToFuture(promise);
+  return (res as num).toInt();
+}
+
 Future<int> _recorder_init_stream(int self,
-        {int sampleRate = 44800,
-        int channels = 1,
-        int format = AudioFormat.float32,
-        int bufferDurationSeconds = 5}) async =>
-    promiseToFuture(_ccall(
-        "recorder_init_stream",
-        "number",
-        ["number", "number", "number", "number", "number"],
-        [self, sampleRate, channels, format, bufferDurationSeconds],
-        {"async": true}));
+    {int sampleRate = 48000,
+    int channels = 1,
+    int format = AudioFormat.float32,
+    int bufferDurationSeconds = 5}) async {
+  final promise = jsu.callMethod(
+    _module,
+    'ccall',
+    [
+      'recorder_init_stream',
+      'number',
+      <String>['number', 'number', 'number', 'number', 'number'],
+      <Object?>[self, sampleRate, channels, format, bufferDurationSeconds],
+      jsu.jsify({'async': true}),
+    ],
+  );
+  final res = await jsu.promiseToFuture(promise);
+  return (res as num).toInt();
+}
 
 @JS()
 external int _recorder_start(int self);
@@ -135,7 +162,7 @@ external int _recorder_get_available_frames(int self);
 @JS()
 external bool _recorder_is_recording(int self);
 @JS()
-external int _recorder_get_buffer(int self, int output, int frames_to_read);
+external int _recorder_get_buffer(int self, int output, int floats_to_read);
 @JS()
 external void _recorder_destroy(int self);
 
@@ -171,16 +198,25 @@ void generator_destroy(int self) => _generator_destroy(self);
 @JS()
 external int _generator_create();
 Future<int> _generator_init(int self,
-        {int sampleRate = 44800,
-        int channels = 1,
-        int format = 4,
-        int bufferDuration = 5}) async =>
-    promiseToFuture(_ccall(
-        "generator_init",
-        "number",
-        ["number", "number", "number", "number", "number"],
-        [self, format, channels, sampleRate, bufferDuration],
-        {"async": true}));
+    {int sampleRate = 48000,
+    int channels = 1,
+    int format = AudioFormat.float32,
+    int bufferDuration = 5}) async {
+  final promise = jsu.callMethod(
+    _module,
+    'ccall',
+    [
+      'generator_init',
+      'number',
+      <String>['number', 'number', 'number', 'number', 'number'],
+      <Object?>[self, format, channels, sampleRate, bufferDuration],
+      jsu.jsify({'async': true}),
+    ],
+  );
+  final res = await jsu.promiseToFuture(promise);
+  return (res as num).toInt();
+}
+
 @JS()
 external int _generator_set_waveform(
     int self, int type, double frequency, double amplitude);
@@ -204,3 +240,85 @@ external int _generator_get_buffer(int self, int output, int frames_to_read);
 external int _generator_get_available_frames(int self);
 @JS()
 external void _generator_destroy(int self);
+
+// Stream player functions
+int stream_player_alloc() => _stream_player_alloc();
+int stream_player_init(int self, int engine, int format, int channels,
+        int sampleRate, int bufferMs) =>
+    _stream_player_init(self, engine, format, channels, sampleRate, bufferMs);
+int stream_player_init_with_engine(int self, int engine, int format,
+        int channels, int sampleRate, int bufferMs) =>
+    _stream_player_init_with_engine(
+        self, engine, format, channels, sampleRate, bufferMs);
+void stream_player_uninit(int self) => _stream_player_uninit(self);
+int stream_player_start(int self) => _stream_player_start(self);
+int stream_player_stop(int self) => _stream_player_stop(self);
+void stream_player_clear(int self) => _stream_player_clear(self);
+void stream_player_set_volume(int self, double volume) =>
+    _stream_player_set_volume(self, volume);
+// Write interleaved f32 frames; returns frames written.
+int stream_player_write_frames_f32(int self, int dataPtr, int frames) =>
+    _stream_player_write_frames_f32(self, dataPtr, frames);
+
+// JS glue (Emscripten ccall)
+@JS()
+external int _stream_player_alloc();
+
+int _stream_player_init(int self, int engine, int format, int channels,
+    int sampleRate, int bufferMs) {
+  final res = jsu.callMethod(
+    _module,
+    'ccall',
+    [
+      'stream_player_init',
+      'number',
+      <String>['number', 'number', 'number', 'number', 'number', 'number'],
+      <Object?>[self, engine, format, channels, sampleRate, bufferMs],
+    ],
+  ) as num;
+  return res.toInt();
+}
+
+int _stream_player_init_with_engine(int self, int engine, int format,
+    int channels, int sampleRate, int bufferMs) {
+  final res = jsu.callMethod(
+    _module,
+    'ccall',
+    [
+      'stream_player_init_with_engine',
+      'number',
+      <String>['number', 'number', 'number', 'number', 'number', 'number'],
+      <Object?>[self, engine, format, channels, sampleRate, bufferMs],
+    ],
+  ) as num;
+  return res.toInt();
+}
+
+@JS()
+external void _stream_player_uninit(int self);
+
+@JS()
+external int _stream_player_start(int self);
+
+@JS()
+external int _stream_player_stop(int self);
+
+@JS()
+external void _stream_player_clear(int self);
+
+@JS()
+external void _stream_player_set_volume(int self, double volume);
+
+int _stream_player_write_frames_f32(int self, int dataPtr, int frames) {
+  final res = jsu.callMethod(
+    _module,
+    'ccall',
+    [
+      'stream_player_write_frames_f32',
+      'number',
+      <String>['number', 'number', 'number'],
+      <Object?>[self, dataPtr, frames],
+    ],
+  ) as num;
+  return res.toInt();
+}

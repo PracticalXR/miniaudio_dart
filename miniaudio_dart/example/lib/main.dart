@@ -30,6 +30,8 @@ class _ExamplePageState extends State<ExamplePage> {
   Timer? recorderTimer;
   Timer? generatorTimer;
   late Generator generator;
+  late StreamPlayer streamPlayer;
+  bool _streamInit = false;
   WaveformType waveformType = WaveformType.sine;
   NoiseType noiseType = NoiseType.white;
   bool enableWaveform = false;
@@ -38,17 +40,32 @@ class _ExamplePageState extends State<ExamplePage> {
   var pulseDelay = 0.25;
   final List<Float32List> recordingBuffer = [];
   final List<Float32List> generatorBuffer = [];
+  bool _monitorMuted = false;
+  double _monitorVolume = 1.0;
 
   int totalRecordedFrames = 0;
   final List<Sound> sounds = [];
 
   late final Future<Sound> soundFuture;
 
+  List<(String name, bool isDefault)> _playbackDevices = const [];
+  int _selectedPlaybackIndex = 0;
+
   @override
   void initState() {
     super.initState();
-    soundFuture =
-        _initializeSound(); // kick off after WASM is ready (index.html awaits loader)
+    soundFuture = _initializeSound();
+    // Load devices after engine init
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        final list = await engine.enumeratePlaybackDevices(); // CHANGED
+        setState(() {
+          _playbackDevices = list;
+          _selectedPlaybackIndex = list.indexWhere((e) => e.$2);
+          if (_selectedPlaybackIndex < 0) _selectedPlaybackIndex = 0;
+        });
+      } catch (_) {}
+    });
   }
 
   Future<Sound> _initializeSound() async {
@@ -57,6 +74,7 @@ class _ExamplePageState extends State<ExamplePage> {
 
       recorder = Recorder();
       generator = Generator();
+      streamPlayer = StreamPlayer(mainEngine: engine);
     }
     return engine.loadSoundAsset("assets/laser_shoot.wav");
   }
@@ -165,22 +183,16 @@ class _ExamplePageState extends State<ExamplePage> {
                             ),
                             onPressed: () async {
                               if (recorder.isRecording) {
+                                // Stop monitoring + recording
+                                setState(() {
+                                  recorder.stop();
+                                });
                                 try {
-                                  final testSound =
-                                      await createSoundFromRecorder(recorder);
-                                  await recorder.engine.start();
-                                  testSound.play();
-                                } on Exception catch (e) {
-                                  print("Error: $e");
-                                } finally {
-                                  setState(() {
-                                    recorder.stop();
-                                  });
-                                  recorderTimer!.cancel();
-
-                                  recordingBuffer.clear();
-                                  totalRecordedFrames = 0;
-                                }
+                                  streamPlayer.stop();
+                                } catch (_) {}
+                                recorderTimer?.cancel();
+                                recordingBuffer.clear();
+                                totalRecordedFrames = 0;
                               } else {
                                 if (!recorder.isInit) {
                                   await recorder.initStream(
@@ -190,6 +202,21 @@ class _ExamplePageState extends State<ExamplePage> {
                                   );
                                   recorder.isInit = true;
                                 }
+                                // Init and start stream player for live monitor
+                                if (!_streamInit) {
+                                  await streamPlayer.init(
+                                    format: AudioFormat.float32,
+                                    channels: recorder.channels,
+                                    sampleRate: recorder.sampleRate,
+                                    bufferMs: 240,
+                                  );
+                                  _streamInit = true;
+                                }
+
+                                // Ensure engine device is running (noAutoStart is true).
+                                await engine.start();
+
+                                streamPlayer.start();
                                 setState(() {
                                   recorder.start();
                                 });
@@ -380,6 +407,121 @@ class _ExamplePageState extends State<ExamplePage> {
                               ),
                             ],
                           ),
+
+                          // Monitor volume + mute
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text("Monitor volume"),
+                              const SizedBox(width: 12),
+                              SizedBox(
+                                width: 240,
+                                child: Slider(
+                                  value: _monitorMuted ? 0.0 : _monitorVolume,
+                                  min: 0.0,
+                                  max: 100.0, // allow a little boost
+                                  onChanged: (v) {
+                                    setState(() {
+                                      _monitorVolume = v;
+                                      _monitorMuted = v == 0.0;
+                                    });
+                                    // Safe to set anytime
+                                    try {
+                                      streamPlayer.volume = v;
+                                    } catch (_) {}
+                                  },
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: _monitorMuted
+                                    ? "Unmute monitor"
+                                    : "Mute monitor",
+                                icon: Icon(_monitorMuted
+                                    ? Icons.volume_off
+                                    : Icons.volume_up),
+                                onPressed: () {
+                                  setState(() {
+                                    _monitorMuted = !_monitorMuted;
+                                  });
+                                  try {
+                                    streamPlayer.volume =
+                                        _monitorMuted ? 0.0 : _monitorVolume;
+                                  } catch (_) {}
+                                },
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text("Output device: "),
+                              const SizedBox(width: 12),
+                              DropdownButton<int>(
+                                value: (_selectedPlaybackIndex >= 0 &&
+                                        _selectedPlaybackIndex <
+                                            _playbackDevices.length)
+                                    ? _selectedPlaybackIndex
+                                    : null,
+                                items: [
+                                  for (var i = 0;
+                                      i < _playbackDevices.length;
+                                      i++)
+                                    DropdownMenuItem(
+                                      value: i,
+                                      child: Text(_playbackDevices[i].$1 +
+                                          (_playbackDevices[i].$2
+                                              ? " (Default)"
+                                              : "")),
+                                    )
+                                ],
+                                onChanged: (idx) async {
+                                  if (idx == null ||
+                                      idx == _selectedPlaybackIndex) return;
+                                  // Stop active graph
+                                  try {
+                                    recorder.stop();
+                                  } catch (_) {}
+                                  try {
+                                    streamPlayer.stop();
+                                  } catch (_) {}
+                                  recorderTimer?.cancel();
+
+                                  // Switch device (native) or noop (web)
+                                  final ok =
+                                      await engine.selectPlaybackDeviceByIndex(
+                                          idx); // CHANGED
+                                  if (!ok) return;
+
+                                  // Recreate stream player bound to engine
+                                  try {
+                                    streamPlayer.dispose();
+                                  } catch (_) {}
+                                  streamPlayer =
+                                      StreamPlayer(mainEngine: engine);
+                                  _streamInit = false;
+
+                                  // Refresh device list after switch
+                                  final list =
+                                      await engine.enumeratePlaybackDevices();
+
+                                  setState(() {
+                                    _selectedPlaybackIndex = idx;
+                                    _playbackDevices = list;
+                                  });
+                                },
+                              ),
+                              IconButton(
+                                tooltip: "Refresh devices",
+                                icon: const Icon(Icons.refresh),
+                                onPressed: () async {
+                                  final list =
+                                      await engine.enumeratePlaybackDevices();
+                                  setState(() => _playbackDevices = list);
+                                },
+                              ),
+                            ],
+                          ),
                         ],
                       ),
                     );
@@ -398,11 +540,19 @@ class _ExamplePageState extends State<ExamplePage> {
   void accumulateRecorderFrames() {
     if (recorder.isRecording) {
       final frames = recorder.getAvailableFrames();
-      if (frames <= 0) return; // FIX: guard
+      if (frames <= 0) return;
       final buffer = recorder.getBuffer(frames);
       if (buffer.isNotEmpty) {
         recordingBuffer.add(buffer);
         totalRecordedFrames += frames;
+        // Live monitor: write directly to the streaming player.
+        if (_streamInit) {
+          try {
+            streamPlayer.writeFloat32(buffer);
+          } catch (_) {
+            // ignore transient backpressure errors
+          }
+        }
       }
     }
   }
@@ -453,6 +603,9 @@ class _ExamplePageState extends State<ExamplePage> {
   void dispose() {
     recorder.dispose();
     generator.dispose();
+    try {
+      streamPlayer.dispose();
+    } catch (_) {}
     super.dispose();
   }
 }

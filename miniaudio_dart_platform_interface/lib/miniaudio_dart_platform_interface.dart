@@ -24,6 +24,15 @@ abstract class MiniaudioDartPlatformInterface {
   PlatformEngine createEngine();
   PlatformRecorder createRecorder();
   PlatformGenerator createGenerator();
+
+  // Streaming player factory
+  PlatformStreamPlayer createStreamPlayer({
+    required PlatformEngine engine,
+    required int format,
+    required int channels,
+    required int sampleRate,
+    int bufferMs = 240,
+  });
 }
 
 enum EngineState { uninit, init, started }
@@ -40,6 +49,10 @@ abstract interface class PlatformEngine {
   void start();
 
   Future<PlatformSound> loadSound(AudioData audioData);
+
+  // output devices
+  Future<List<(String name, bool isDefault)>> enumeratePlaybackDevices();
+  Future<bool> selectPlaybackDeviceByIndex(int index);
 }
 
 typedef PlatformSoundLooping = (bool isLooped, int delayMs);
@@ -107,6 +120,18 @@ abstract interface class PlatformGenerator {
   void stop();
   Float32List getBuffer(int framesToRead);
   int getAvailableFrames();
+  void dispose();
+}
+
+// Streaming playback of raw PCM (Float32 interleaved recommended)
+abstract interface class PlatformStreamPlayer {
+  double get volume;
+  set volume(double value);
+  void start();
+  void stop();
+  void clear();
+  // Write interleaved Float32 samples; returns frames written.
+  int writeFloat32(Float32List interleaved);
   void dispose();
 }
 

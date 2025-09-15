@@ -8,16 +8,21 @@
 #include "export.h"
 #include "silence_data_source.h"
 
-typedef struct
-{
-    bool is_raw_data;
+typedef struct Sound {
     ma_engine *engine;
-    ma_decoder decoder;
     ma_sound sound;
+
+    bool is_raw_data;
     ma_audio_buffer buffer;
+    ma_decoder decoder;
+
     bool is_looped;
-    size_t loop_delay_ms;
+    int  loop_delay_ms;
     SilenceDataSource loop_delay_ds;
+
+    // Own a copy of the input bytes for decoder/buffer lifetime
+    void*  owned_data;
+    size_t owned_size;
 } Sound;
 
 EXPORT Sound *sound_alloc();

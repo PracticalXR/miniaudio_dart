@@ -37,6 +37,126 @@ class MiniaudioDartFfi extends MiniaudioDartPlatformInterface {
     if (self == nullptr) throw MiniaudioDartPlatformOutOfMemoryException();
     return FfiGenerator(self);
   }
+
+  // NEW: streaming player
+  @override
+  PlatformStreamPlayer createStreamPlayer({
+    required PlatformEngine engine,
+    required int format,
+    required int channels,
+    required int sampleRate,
+    int bufferMs = 240,
+  }) {
+    final eng = (engine as FfiEngine)._self;
+
+    final sp = bindings.stream_player_alloc();
+    if (sp == nullptr) {
+      throw MiniaudioDartPlatformOutOfMemoryException();
+    }
+
+    final ok = bindings.stream_player_init_with_engine(
+      sp,
+      eng,
+      bindings.ma_format.fromValue(format),
+      channels,
+      sampleRate,
+      bufferMs,
+    );
+    if (ok != 1) {
+      // Do not free sp with calloc; it was allocated in C (ma_malloc).
+      // Optional: add a native stream_player_free() and call it here.
+      throw MiniaudioDartPlatformException("stream_player_init failed.");
+    }
+
+    return FfiStreamPlayer._(sp, channels);
+  }
+}
+
+final class FfiStreamPlayer implements PlatformStreamPlayer {
+  FfiStreamPlayer._(Pointer<bindings.StreamPlayer> self, this._channels)
+      : _self = self;
+
+  final Pointer<bindings.StreamPlayer> _self;
+  final int _channels;
+
+  Pointer<Float> _scratch = nullptr;
+  int _scratchFloats = 0;
+
+  double _volume = 1.0;
+  @override
+  double get volume => _volume;
+
+  @override
+  set volume(double v) {
+    final clamped = v.isNaN ? 0.0 : v.clamp(0.0, 100.0).toDouble();
+    _volume = clamped;
+    bindings.stream_player_set_volume(_self, clamped);
+  }
+
+  @override
+  void start() {
+    final ok = bindings.stream_player_start(_self);
+    if (ok != 1) {
+      throw MiniaudioDartPlatformException("stream_player_start failed.");
+    }
+  }
+
+  @override
+  void stop() {
+    final ok = bindings.stream_player_stop(_self);
+    if (ok != 1) {
+      throw MiniaudioDartPlatformException("stream_player_stop failed.");
+    }
+  }
+
+  @override
+  void clear() {
+    bindings.stream_player_clear(_self);
+  }
+
+  // Safely writes interleaved Float32 samples. Returns frames written by native side.
+  @override
+  int writeFloat32(Float32List interleaved) {
+    if (interleaved.isEmpty) return 0;
+
+    final int floats = interleaved.length; // elements, not bytes
+    if (floats % _channels != 0) {
+      throw MiniaudioDartPlatformException(
+        "writeFloat32: floats ($floats) not divisible by channels ($_channels)",
+      );
+    }
+    final int frames = floats ~/ _channels;
+
+    // (Re)allocate scratch buffer if needed. calloc ensures proper alignment.
+    if (_scratch == nullptr || _scratchFloats < floats) {
+      if (_scratch != nullptr) calloc.free(_scratch);
+      _scratch = calloc<Float>(floats); // aligned
+      _scratchFloats = floats;
+    }
+
+    // Copy interleaved data into native buffer.
+    _scratch.asTypedList(floats).setAll(0, interleaved);
+
+    final int written = bindings.stream_player_write_frames_f32(
+      _self,
+      _scratch,
+      frames,
+    );
+
+    // written is frames; caller can track backpressure from this.
+    return written;
+  }
+
+  @override
+  void dispose() {
+    if (_scratch != nullptr) {
+      calloc.free(_scratch);
+      _scratch = nullptr;
+      _scratchFloats = 0;
+    }
+    bindings.stream_player_uninit(_self);
+    // Do not free _self with calloc; add and call a native stream_player_free() if available.
+  }
 }
 
 // engine ffi
@@ -101,6 +221,40 @@ final class FfiEngine implements PlatformEngine {
     }
 
     return FfiSound._fromPtrs(sound, dataPtr);
+  }
+
+  Future<List<(String name, bool isDefault)>> enumeratePlaybackDevices() async {
+    final ok = bindings.engine_refresh_playback_devices(_self);
+    if (ok == 0) return const [];
+    final count = bindings.engine_get_playback_device_count(_self);
+    final result = <(String, bool)>[];
+    final nameBuf = calloc<Char>(256);
+    final isDefPtr = calloc<bindings.ma_bool32>();
+    try {
+      for (var i = 0; i < count; i++) {
+        final ok2 = bindings.engine_get_playback_device_name(
+          _self,
+          i,
+          nameBuf,
+          256,
+          isDefPtr,
+        );
+        if (ok2 != 0) {
+          final name = nameBuf.cast<Utf8>().toDartString();
+          final isDef = isDefPtr.value;
+          result.add((name, isDef == 1));
+        }
+      }
+    } finally {
+      calloc.free(nameBuf);
+      calloc.free(isDefPtr);
+    }
+    return result;
+  }
+
+  Future<bool> selectPlaybackDeviceByIndex(int index) async {
+    final ok = bindings.engine_select_playback_device_by_index(_self, index);
+    return ok != 0;
   }
 }
 

@@ -22,5 +22,17 @@ EXPORT int engine_load_sound(
     int sample_rate,
     int channels
 );
+EXPORT ma_engine* engine_get_ma_engine(Engine *const self);
+
+typedef struct PlaybackDeviceInfo {
+    char name[256];
+    ma_bool32 isDefault;
+    ma_device_id id; // opaque bytes; used internally for selection
+} PlaybackDeviceInfo;
+
+EXPORT int engine_refresh_playback_devices(Engine* self);
+EXPORT ma_uint32 engine_get_playback_device_count(Engine* self);
+EXPORT int engine_get_playback_device_name(Engine* self, ma_uint32 index, char* outName, ma_uint32 capName, ma_bool32* pIsDefault);
+EXPORT int engine_select_playback_device_by_index(Engine* self, ma_uint32 index);
 
 #endif

@@ -1,6 +1,7 @@
 #include "../include/sound.h"
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 #include "../include/miniaudio.h"
 
 Sound *sound_alloc()
@@ -21,59 +22,73 @@ int sound_init(
     self->engine = engine;
     self->is_looped = false;
     self->loop_delay_ms = 0;
+    self->owned_data = NULL;
+    self->owned_size = 0;
+
+    // Always make an internal copy so the data source has stable memory.
+    if (data != NULL && data_size > 0) {
+        self->owned_data = malloc(data_size);
+        if (self->owned_data == NULL) return 0;
+        memcpy(self->owned_data, (const void*)data, data_size);
+        self->owned_size = data_size;
+    }
 
     if (format != ma_format_unknown && channels > 0 && sample_rate > 0)
     {
-        // Raw PCM data
+        // RAW PCM path: use ma_audio_buffer so the engine can resample to its rate.
         self->is_raw_data = true;
 
-        size_t frame_count = data_size / (channels * ma_get_bytes_per_sample(format));
+        // Compute frame count from byte size.
+        ma_uint32 bps = (ma_uint32)ma_get_bytes_per_sample(format);
+        ma_uint32 ch  = (ma_uint32)channels;
+        ma_uint64 frames = 0;
+        if (bps != 0 && ch != 0) {
+            ma_uint64 bytesPerFrame = (ma_uint64)bps * (ma_uint64)ch;
+            frames = (ma_uint64)(self->owned_size / bytesPerFrame);
+        }
 
-        ma_audio_buffer_config buffer_config = ma_audio_buffer_config_init(
-            format,
-            channels,
-            frame_count,
-            data,
-            NULL);
+        ma_audio_buffer_config cfg =
+            ma_audio_buffer_config_init(
+                format,
+                ch,
+                frames,                 // sizeInFrames
+                self->owned_data,       // pData
+                NULL);                  // pAllocationCallbacks
 
-        ma_result result = ma_audio_buffer_init(&buffer_config, &self->buffer);
-        if (result != MA_SUCCESS)
-        {
+        if (ma_audio_buffer_init(&cfg, &self->buffer) != MA_SUCCESS) {
+            free(self->owned_data); self->owned_data = NULL; self->owned_size = 0;
             return 0;
         }
 
-        result = ma_sound_init_from_data_source(
-            engine,
-            &self->buffer,
-            MA_SOUND_FLAG_NO_PITCH | MA_SOUND_FLAG_NO_SPATIALIZATION,
-            NULL,
-            &self->sound);
-        if (result != MA_SUCCESS)
-        {
+        if (ma_sound_init_from_data_source(
+                engine,
+                (ma_data_source*)&self->buffer,
+                MA_SOUND_FLAG_NO_PITCH | MA_SOUND_FLAG_NO_SPATIALIZATION,
+                NULL,
+                &self->sound) != MA_SUCCESS) {
             ma_audio_buffer_uninit(&self->buffer);
+            free(self->owned_data); self->owned_data = NULL; self->owned_size = 0;
             return 0;
         }
     }
     else
     {
-        // Encoded audio file data
+        // Encoded audio path (WAV/OGG/etc.)
         self->is_raw_data = false;
 
-        ma_result result = ma_decoder_init_memory(data, data_size, NULL, &self->decoder);
-        if (result != MA_SUCCESS)
-        {
+        if (ma_decoder_init_memory(self->owned_data, self->owned_size, NULL, &self->decoder) != MA_SUCCESS) {
+            free(self->owned_data); self->owned_data = NULL; self->owned_size = 0;
             return 0;
         }
 
-        result = ma_sound_init_from_data_source(
-            engine,
-            &self->decoder,
-            MA_SOUND_FLAG_NO_PITCH | MA_SOUND_FLAG_NO_SPATIALIZATION,
-            NULL,
-            &self->sound);
-        if (result != MA_SUCCESS)
-        {
+        if (ma_sound_init_from_data_source(
+                engine,
+                (ma_data_source*)&self->decoder,
+                MA_SOUND_FLAG_NO_PITCH | MA_SOUND_FLAG_NO_SPATIALIZATION,
+                NULL,
+                &self->sound) != MA_SUCCESS) {
             ma_decoder_uninit(&self->decoder);
+            free(self->owned_data); self->owned_data = NULL; self->owned_size = 0;
             return 0;
         }
     }
@@ -83,15 +98,17 @@ int sound_init(
 
 void sound_unload(Sound *const self)
 {
-    if (self->is_raw_data)
-    {
+    if (self->is_raw_data) {
         ma_sound_uninit(&self->sound);
         ma_audio_buffer_uninit(&self->buffer);
-    }
-    else
-    {
+    } else {
         ma_sound_uninit(&self->sound);
         ma_decoder_uninit(&self->decoder);
+    }
+    if (self->owned_data) {
+        free(self->owned_data);
+        self->owned_data = NULL;
+        self->owned_size = 0;
     }
 }
 
@@ -125,8 +142,8 @@ void sound_stop(Sound *const self)
 
 float sound_get_volume(Sound const *const self)
 {
-    ma_sound *sound = &self->sound;
-    return ma_sound_get_volume(sound);
+    // Avoid discarding qualifiers warning.
+    return ma_sound_get_volume(&self->sound);
 }
 
 void sound_set_volume(Sound *const self, float const value)

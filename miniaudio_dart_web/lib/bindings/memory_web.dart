@@ -28,6 +28,13 @@ void copyBytes(int destPtr, ByteBuffer buffer) {
   heap.setRange(destPtr, destPtr + src.length, src);
 }
 
+// NEW: copy bytes from a typed view (respects offset and length)
+void copyFromTypedData(int destPtr, TypedData view) {
+  final src = view.buffer.asUint8List(view.offsetInBytes, view.lengthInBytes);
+  final heap = HEAPU8.toDart;
+  heap.setRange(destPtr, destPtr + src.length, src);
+}
+
 // Read back f32 samples
 Float32List readF32(int ptr, int count) {
   assert((ptr & 3) == 0, 'readF32: pointer not 4-byte aligned'); // FIX: guard

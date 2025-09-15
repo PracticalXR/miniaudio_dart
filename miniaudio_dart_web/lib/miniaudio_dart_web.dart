@@ -1,5 +1,6 @@
 // ignore_for_file: omit_local_variable_types
 
+import "dart:async";
 import "dart:typed_data";
 import "package:miniaudio_dart_platform_interface/miniaudio_dart_platform_interface.dart";
 import "package:miniaudio_dart_web/bindings/miniaudio_dart.dart" as wasm;
@@ -21,17 +22,119 @@ class MiniaudioDartWeb extends MiniaudioDartPlatformInterface {
   }
 
   @override
-  PlatformRecorder createRecorder() {
-    final self = wasm.recorder_create();
-    if (self == 0) throw MiniaudioDartPlatformOutOfMemoryException();
-    return WebRecorder(self);
+  PlatformRecorder createRecorder() => WebRecorder(wasm.recorder_create());
+
+  @override
+  PlatformGenerator createGenerator() => WebGenerator(wasm.generator_create());
+
+  // Streaming player factory
+  @override
+  PlatformStreamPlayer createStreamPlayer({
+    required PlatformEngine engine,
+    required int format,
+    required int channels,
+    required int sampleRate,
+    int bufferMs = 240,
+  }) {
+    if (format != AudioFormat.float32) {
+      throw MiniaudioDartPlatformException(
+        "Web StreamPlayer supports only AudioFormat.float32",
+      );
+    }
+    final eng = (engine as WebEngine)._self;
+    final sp = wasm.stream_player_alloc();
+    if (sp == 0) {
+      throw MiniaudioDartPlatformOutOfMemoryException();
+    }
+    // use with_engine variant (Engine* -> ma_engine*)
+    final ok = wasm.stream_player_init_with_engine(
+        sp, eng, format, channels, sampleRate, bufferMs);
+    if (ok == 0) {
+      throw MiniaudioDartPlatformException("stream_player_init failed");
+    }
+    return WebStreamPlayer._(sp, channels);
+  }
+}
+
+// Optional interface; align with your platform_interface
+final class WebStreamPlayer implements PlatformStreamPlayer {
+  WebStreamPlayer._(this._self, this._channels);
+  final int _self;
+  final int _channels;
+
+  // Reusable scratch buffer (in bytes).
+  int _scratchPtr = 0;
+  int _scratchBytes = 0;
+
+  double _volume = 1.0;
+  @override
+  double get volume => _volume;
+  @override
+  set volume(double v) {
+    final clamped = (v.isNaN ? 0.0 : v).clamp(0.0, 100.0).toDouble();
+    _volume = clamped;
+    // If you have a wasm export, call it; otherwise apply gain in writeFloat32.
+    try {
+      wasm.stream_player_set_volume(_self, clamped);
+    } catch (_) {}
   }
 
   @override
-  PlatformGenerator createGenerator() {
-    final self = wasm.generator_create();
-    if (self == 0) throw MiniaudioDartPlatformOutOfMemoryException();
-    return WebGenerator(self);
+  void start() {
+    final ok = wasm.stream_player_start(_self);
+    if (ok == 0) {
+      throw MiniaudioDartPlatformException("stream_player_start failed");
+    }
+  }
+
+  @override
+  void stop() {
+    final ok = wasm.stream_player_stop(_self);
+    if (ok == 0) {
+      throw MiniaudioDartPlatformException("stream_player_stop failed");
+    }
+  }
+
+  @override
+  void clear() {
+    wasm.stream_player_clear(_self);
+  }
+
+  // Write interleaved Float32 samples; returns frames written.
+  // Ensures 4-byte alignment and correct byte length.
+  @override
+  int writeFloat32(Float32List interleaved) {
+    if (interleaved.isEmpty) return 0;
+    final floats = interleaved.lengthInBytes ~/ 4;
+    if (floats % _channels != 0) {
+      throw MiniaudioDartPlatformException(
+          "writeFloat32: floats ($floats) not divisible by channels ($_channels)");
+    }
+    final frames = floats ~/ _channels;
+    final bytes = interleaved.lengthInBytes;
+
+    // Ensure aligned, contiguous buffer in WASM heap.
+    if (_scratchBytes < bytes) {
+      if (_scratchPtr != 0) mem.free(_scratchPtr);
+      _scratchPtr = mem.allocate(bytes);
+      _scratchBytes = bytes;
+      assert((_scratchPtr & 3) == 0, "malloc returned unaligned pointer");
+    }
+    mem.copyFromTypedData(_scratchPtr, interleaved);
+
+    final written =
+        wasm.stream_player_write_frames_f32(_self, _scratchPtr, frames);
+    return written;
+  }
+
+  @override
+  void dispose() {
+    if (_scratchPtr != 0) {
+      mem.free(_scratchPtr);
+      _scratchPtr = 0;
+      _scratchBytes = 0;
+    }
+    wasm.stream_player_uninit(_self);
   }
 }
 
@@ -41,10 +144,30 @@ final class WebEngine implements PlatformEngine {
 
   @override
   EngineState state = EngineState.uninit;
+  Future<void>? _initPending; // serialize init
 
   @override
   Future<void> init(int periodMs) async {
-    await wasm.engine_init(_self, periodMs);
+    if (state == EngineState.init) return;
+    if (_initPending != null) {
+      await _initPending;
+      return;
+    }
+    final c = Completer<void>();
+    _initPending = c.future;
+    try {
+      final ok = await wasm.engine_init(_self, periodMs);
+      if (ok == 0) {
+        throw MiniaudioDartPlatformException('engine_init failed (0)');
+      }
+      state = EngineState.init;
+      c.complete();
+    } catch (e) {
+      c.completeError(e);
+      rethrow;
+    } finally {
+      _initPending = null;
+    }
   }
 
   @override
@@ -54,11 +177,22 @@ final class WebEngine implements PlatformEngine {
 
   @override
   void start() {
+    final pending = _initPending;
+    if (pending != null) {
+      // Defer start until init finishes to avoid Asyncify re-entry/races.
+      pending.whenComplete(() {
+        wasm.engine_start(_self);
+      });
+      return;
+    }
     wasm.engine_start(_self);
   }
 
   @override
   Future<PlatformSound> loadSound(AudioData audioData) async {
+    if (_initPending != null) {
+      await _initPending; // wait for engine to be ready
+    }
     final bytes = audioData.buffer.lengthInBytes;
     if (bytes == 0) {
       throw MiniaudioDartPlatformException("loadSound: empty buffer");
@@ -97,26 +231,15 @@ final class WebEngine implements PlatformEngine {
     }
   }
 
-  // If you keep this helper for other uses, fix the mapping:
-  int _bytesPerSample(int format) {
-    switch (format) {
-      case AudioFormat.uint8:
-        return 1;
-      case AudioFormat.int16:
-        return 2;
-      // If you support 24-bit packed PCM, map it to 3; otherwise omit.
-      case AudioFormat.int32:
-        return 4;
-      case AudioFormat.float32:
-        return 4;
-      default:
-        return 1;
-    }
+  // WebAudio cannot select output devices (no setSinkId for AudioContext).
+  Future<List<(String name, bool isDefault)>> enumeratePlaybackDevices() async {
+    // WebAudio: no output device selection; return a single default device.
+    return const [("Default Output", true)];
   }
 
-  int _sampleCountForTypedBuffer(TypedData buffer, int format) {
-    final bps = _bytesPerSample(format);
-    return buffer.lengthInBytes ~/ bps;
+  Future<bool> selectPlaybackDeviceByIndex(int index) async {
+    // No-op on web
+    return index == 0;
   }
 }
 

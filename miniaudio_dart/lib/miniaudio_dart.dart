@@ -15,6 +15,7 @@ export "package:miniaudio_dart_platform_interface/miniaudio_dart_platform_interf
 /// Should be initialized before doing anything.
 /// Should be started to hear any sound.
 final class Engine {
+  bool isInit = false;
   Engine() {
     _finalizer.attach(this, _engine);
   }
@@ -25,7 +26,6 @@ final class Engine {
   static final _soundsFinalizer = Finalizer<Sound>((sound) => sound.unload());
 
   final _engine = PlatformEngine();
-  var isInit = false;
 
   /// Initializes an engine.
   ///
@@ -47,6 +47,14 @@ final class Engine {
     _soundsFinalizer.attach(this, sound);
     return sound;
   }
+
+  /// Enumerate playback devices. Returns (name, isDefault).
+  Future<List<(String, bool)>> enumeratePlaybackDevices() =>
+      _engine.enumeratePlaybackDevices();
+
+  /// Select playback device by index (recreates native engine).
+  Future<bool> selectPlaybackDeviceByIndex(int index) =>
+      _engine.selectPlaybackDeviceByIndex(index);
 }
 
 /// A sound.
@@ -108,8 +116,8 @@ final class Sound {
 final class Recorder {
   @override
   Recorder({Engine? mainEngine})
-    : engine = mainEngine ?? Engine(),
-      _recorder = MiniaudioDartPlatformInterface.instance.createRecorder();
+      : engine = mainEngine ?? Engine(),
+        _recorder = MiniaudioDartPlatformInterface.instance.createRecorder();
 
   final PlatformRecorder _recorder;
   Engine engine;
@@ -225,8 +233,8 @@ final class Recorder {
 /// A generator for waveforms and noise.
 final class Generator {
   Generator({Engine? mainEngine})
-    : engine = mainEngine ?? Engine(),
-      _generator = MiniaudioDartPlatformInterface.instance.createGenerator();
+      : engine = mainEngine ?? Engine(),
+        _generator = MiniaudioDartPlatformInterface.instance.createGenerator();
 
   double get volume => _generator.volume;
   set volume(double value) => _generator.volume = value < 0 ? 0 : value;
@@ -316,6 +324,90 @@ final class Generator {
   /// Disposes of the generator resources.
   void dispose() {
     _generator.dispose();
+  }
+}
+
+/// Streamed playback of raw PCM (low latency, no per-chunk sounds).
+final class StreamPlayer {
+  StreamPlayer({Engine? mainEngine}) : engine = mainEngine ?? Engine();
+
+  final Engine engine;
+  PlatformStreamPlayer? _player;
+  bool _isInit = false;
+  int _channels = 1;
+  int _sampleRate = 48000;
+  int _format = AudioFormat.float32;
+  int _bufferMs = 100;
+
+  // Initialize the underlying stream player.
+  Future<void> init({
+    int format = AudioFormat.float32,
+    int channels = 1,
+    int sampleRate = 48000,
+    int bufferMs = 100,
+  }) async {
+    if (!_isInit) {
+      if (!engine.isInit) {
+        await engine.init(); // default 10ms period
+        await engine.start();
+        _player?.start();
+      }
+      if (format != AudioFormat.float32) {
+        throw MiniaudioDartPlatformException(
+          "Only AudioFormat.float32 is supported by StreamPlayer",
+        );
+      }
+      _channels = channels;
+      _sampleRate = sampleRate;
+      _format = format;
+      _bufferMs = bufferMs;
+      _player = MiniaudioDartPlatformInterface.instance.createStreamPlayer(
+        engine: engine._engine,
+        format: _format,
+        channels: _channels,
+        sampleRate: _sampleRate,
+        bufferMs: _bufferMs,
+      );
+      _isInit = true;
+    }
+  }
+
+  double get volume => _player?.volume ?? 1.0;
+  set volume(double v) {
+    if (_player == null) return;
+    _player!.volume = v < 0 ? 0 : v;
+  }
+
+  void start() {
+    _ensureInit();
+    _player!.start();
+  }
+
+  void stop() {
+    if (_player == null) return;
+    _player!.stop();
+  }
+
+  void clear() {
+    if (_player == null) return;
+    _player!.clear();
+  }
+
+  // Write interleaved Float32 PCM. Returns frames written.
+  int writeFloat32(Float32List interleaved) {
+    return _player!.writeFloat32(interleaved);
+  }
+
+  void dispose() {
+    _player?.dispose();
+    _player = null;
+    _isInit = false;
+  }
+
+  void _ensureInit() {
+    if (!_isInit || _player == null) {
+      throw StateError("StreamPlayer not initialized. Call init() first.");
+    }
   }
 }
 

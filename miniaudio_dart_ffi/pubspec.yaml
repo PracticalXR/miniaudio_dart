@@ -34,6 +34,8 @@ ffigen:
       - "src/include/record.h"
       - "src/include/generator.h"
       - "src/include/circular_buffer.h"
+      - "src/include/silence_data_source.h"
+      - "src/include/stream_player.h"
     include-directives:
       - "src/include/*.h"
       - "/usr/lib/clang/18/include/stdbool.h"
