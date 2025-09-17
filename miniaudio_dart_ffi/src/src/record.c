@@ -1,4 +1,29 @@
 #include "../include/record.h"
+#include "../include/codec_inline_encoder.h"
+#include "../include/codec.h"
+#include "../include/codec_opus_diag.h"
+#include <stdio.h> /* for fprintf, stderr */
+
+#ifdef HAVE_OPUS
+/* Ensure Opus application constants are visible here. */
+#  if defined(OPUS_HEADER_FLAT)
+#    if __has_include(<opus.h>)
+#      include <opus.h>
+#    else
+#      error "OPUS_HEADER_FLAT defined but <opus.h> not found"
+#    endif
+#  else
+#    if __has_include(<opus/opus.h>)
+#      include <opus/opus.h>
+#    elif __has_include(<opus.h>)
+#      include <opus.h>
+#      define OPUS_HEADER_FLAT 1
+#    else
+#      warning "HAVE_OPUS set but Opus header not found; disabling opus path."
+#      undef HAVE_OPUS
+#    endif
+#  endif
+#endif
 
 static void data_callback(ma_device *pDevice, void *pOutput, const void *pInput,
                           ma_uint32 frameCount) {
@@ -20,6 +45,17 @@ static void data_callback(ma_device *pDevice, void *pOutput, const void *pInput,
 
   if (r->is_file_recording) {
     ma_encoder_write_pcm_frames(&r->encoder, pInput, frameCount, NULL);
+  }
+
+  // After copying into ring buffer, feed inline encoder (if enabled) as float.
+  if (r->inlineEncoder) {
+      if (r->format == ma_format_f32) {
+          #ifdef INLINE_ENCODER_USES_FEED
+          inline_encoder_feed(r->inlineEncoder, (const float*)pInput, (int)frameCount);
+          #else
+          inline_encoder_on_capture(r->inlineEncoder, (const float*)pInput, (int)frameCount);
+          #endif
+      }
   }
   (void)pOutput;
 }
@@ -185,7 +221,7 @@ RecorderResult recorder_start(Recorder *recorder) {
   if (!recorder)
     return RECORDER_ERROR_INVALID_ARGUMENT;
   if (recorder->is_recording)
-    return RECORDER_ERROR_ALREADY_RECORDING;
+    return RECORDER_OK; /* idempotent */
 
   if (ma_device_start(&recorder->device) != MA_SUCCESS)
     return RECORDER_ERROR_UNKNOWN;
@@ -198,7 +234,7 @@ RecorderResult recorder_stop(Recorder *recorder) {
   if (!recorder)
     return RECORDER_ERROR_INVALID_ARGUMENT;
   if (!recorder->is_recording)
-    return RECORDER_ERROR_NOT_RECORDING;
+    return RECORDER_OK; /* idempotent */
 
   ma_device_stop(&recorder->device);
   recorder->is_recording = false;
@@ -284,7 +320,7 @@ static int recorder_ensure_context(Recorder* r) {
     return 1;
 }
 
-static void recorder_free_capture_cache(Recorder* r) {
+extern void recorder_free_capture_cache(Recorder* r) {
     if (!r) return;
     if (r->captureInfos) {
         free(r->captureInfos);
@@ -387,4 +423,82 @@ int recorder_select_capture_device_by_index(Recorder* r, ma_uint32 index) {
 
     r->captureGeneration++; /* device change event */
     return 1;
+}
+
+/* ================= Inline Opus Encoder Integration ================= */
+
+int recorder_attach_inline_opus(Recorder* r, int sample_rate, int channels) {
+#ifdef HAVE_OPUS
+    if (!r) return 0;
+    if (r->inlineEncoder) return 1;
+    if (sample_rate != r->sample_rate || channels != r->channels) return 0;
+    if (r->format != ma_format_f32) return 0;
+
+#if !defined(OPUS_APPLICATION_AUDIO)
+#define OPUS_APPLICATION_AUDIO 2049
+#endif
+
+    CodecConfig cfg;
+    cfg.sample_rate     = sample_rate;
+    cfg.channels        = channels;
+    cfg.bits_per_sample = 32;
+
+    Codec* c = codec_create_opus(&cfg, OPUS_APPLICATION_AUDIO);
+    if (!c) {
+        fprintf(stderr,"[opus] create failed: %s (sr=%d ch=%d)\n",
+                codec_opus_last_error(), cfg.sample_rate, cfg.channels);
+        return 0;
+    }
+
+    InlineEncoder* ie = (InlineEncoder*)calloc(1, sizeof(InlineEncoder));
+    if (!ie) {
+        if (c->vt.destroy) c->vt.destroy(c);
+        return 0;
+    }
+    if (!inline_encoder_init(ie, c, channels, 32, 128)) {
+        if (c->vt.destroy) c->vt.destroy(c);
+        free(ie);
+        return 0;
+    }
+    r->inlineEncoder = ie;
+    return 1;
+#else
+    (void)r; (void)sample_rate; (void)channels;
+    return 0;
+#endif
+}
+
+int recorder_detach_inline_encoder(Recorder* r) {
+    if (!r) return 0;
+    if (!r->inlineEncoder) return 1;
+    inline_encoder_uninit(r->inlineEncoder);
+    free(r->inlineEncoder);
+    r->inlineEncoder = NULL;
+    return 1;
+}
+
+int recorder_encoder_dequeue_packet(Recorder* r, void* outBuf, int cap) {
+    if (!r || !r->inlineEncoder || !outBuf || cap <= 0) return 0;
+    int len = inline_encoder_dequeue(r->inlineEncoder, (uint8_t*)outBuf, (uint16_t)cap);
+    if (len < 0) return 0;
+    return len;
+}
+
+uint32_t recorder_encoder_pending(Recorder* r) {
+    if (!r || !r->inlineEncoder) return 0;
+    return inline_encoder_pending(r->inlineEncoder);
+}
+
+// Ensure implementations exist (already added previously). If not, include them near other inline encoder funcs:
+
+int recorder_inline_encoder_feed_f32(Recorder* r, const float* interleaved, int frameCount) {
+    if (!r || !interleaved || frameCount <= 0) return 0;
+    if (!r->inlineEncoder) return 0;
+    inline_encoder_on_capture(r->inlineEncoder, interleaved, frameCount);
+    return frameCount;
+}
+
+int recorder_inline_encoder_flush(Recorder* r, int padWithZeros) {
+    if (!r || !r->inlineEncoder) return 0;
+    return inline_encoder_flush(r->inlineEncoder, padWithZeros ? 1 : 0);
 }

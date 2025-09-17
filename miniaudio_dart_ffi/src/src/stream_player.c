@@ -1,5 +1,7 @@
 #include "../include/stream_player.h"
 #include "../include/engine.h"  // for Engine* helper
+#include "../include/codec_runtime.h"
+#include "../include/codec_packet_format.h"
 #include <string.h>
 #include <stddef.h> // offsetof
 
@@ -26,6 +28,9 @@ struct StreamPlayer {
 
     ma_bool32  started;
     float      volume;
+
+    CodecRuntime codecRT;
+    int          codecRTInitialized;
 };
 
 /******** vtable callbacks ********/
@@ -158,6 +163,14 @@ int stream_player_init(StreamPlayer* self,
     }
 
     ma_sound_set_volume(&self->sound, self->volume);
+
+    CodecConfig cc = { .sample_rate = self->sampleRate, .channels = self->channels, .bits_per_sample = 32 };
+    if (codec_runtime_init(&self->codecRT, CODEC_ID_NONE, &cc)) {
+        self->codecRTInitialized = 1;
+    } else {
+        self->codecRTInitialized = 0;
+    }
+
     return 1;
 }
 
@@ -167,6 +180,11 @@ void stream_player_uninit(StreamPlayer* self)
     ma_sound_uninit(&self->sound);
     ma_data_source_uninit((ma_data_source*)&self->ds.base);
     ma_pcm_rb_uninit(&self->rb);
+
+    if (self->codecRTInitialized) {
+        codec_runtime_uninit(&self->codecRT);
+        self->codecRTInitialized = 0;
+    }
 }
 
 int stream_player_start(StreamPlayer* self)
@@ -241,4 +259,21 @@ int stream_player_init_with_engine(StreamPlayer* self,
     if (mae == NULL) return 0;
     // Forward to the standard initializer that takes a ma_engine*
     return stream_player_init(self, mae, format, channels, sample_rate, buffer_ms);
+}
+
+int stream_player_push_encoded_packet(StreamPlayer* sp,
+                                      const void* data,
+                                      int len)
+{
+    if (!sp || !data || len <= CODEC_FRAME_HEADER_BYTES) return 0;
+    if (!sp->codecRTInitialized) {
+        CodecConfig cc = { .sample_rate = sp->sampleRate, .channels = sp->channels, .bits_per_sample = 32 };
+        if (!codec_runtime_init(&sp->codecRT, CODEC_ID_NONE, &cc))
+            return 0;
+        sp->codecRTInitialized = 1;
+    }
+    return codec_runtime_push_packet(&sp->codecRT,
+                                     (const uint8_t*)data,
+                                     len,
+                                     sp);
 }

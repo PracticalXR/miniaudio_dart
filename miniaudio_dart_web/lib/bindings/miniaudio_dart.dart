@@ -353,3 +353,38 @@ int _stream_player_write_frames_f32(int self, int dataPtr, int frames) {
   ) as num;
   return res.toInt();
 }
+
+@JS()
+external int _recorder_attach_inline_opus(
+    int self, int sampleRate, int channels);
+@JS()
+external int _recorder_encoder_pending(int self);
+@JS()
+external int _recorder_encoder_dequeue_packet(int self, int outPtr, int cap);
+
+@JS()
+external int _stream_player_push_encoded_packet(
+    int self, int dataPtr, int length);
+
+// Convenience wrappers (ccall if needed async = false)
+int recorder_attach_inline_opus(int self, int sampleRate, int channels) =>
+    _recorder_attach_inline_opus(self, sampleRate, channels);
+int recorder_encoder_pending(int self) => _recorder_encoder_pending(self);
+int recorder_encoder_dequeue_packet(int self, int outPtr, int cap) =>
+    _recorder_encoder_dequeue_packet(self, outPtr, cap);
+
+int stream_player_push_encoded_packet(int self, int dataPtr, int length) =>
+    _stream_player_push_encoded_packet(self, dataPtr, length);
+
+// Ensure these JS externs exist (add if missing):
+
+@JS()
+external int _recorder_inline_encoder_feed_f32(
+    int self, int dataPtr, int frames);
+@JS()
+external int _recorder_inline_encoder_flush(int self, int pad);
+
+int recorder_inline_encoder_feed_f32(int self, int dataPtr, int frames) =>
+    _recorder_inline_encoder_feed_f32(self, dataPtr, frames);
+int recorder_inline_encoder_flush(int self, int pad) =>
+    _recorder_inline_encoder_flush(self, pad);

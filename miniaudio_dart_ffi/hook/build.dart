@@ -55,6 +55,7 @@ Future<void> runBuild(
   }
 
   final builder = CMakeBuilder.create(
+    buildMode: BuildMode.debug,
     name: name,
     sourceDir: sourceDir,
     generator: generator,

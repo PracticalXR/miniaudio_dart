@@ -454,6 +454,45 @@ external void recorder_free_capture_cache(
   ffi.Pointer<Recorder> r,
 );
 
+@ffi.Native<ffi.Int Function(ffi.Pointer<Recorder>, ffi.Int, ffi.Int)>()
+external int recorder_attach_inline_opus(
+  ffi.Pointer<Recorder> r,
+  int sample_rate,
+  int channels,
+);
+
+@ffi.Native<ffi.Int Function(ffi.Pointer<Recorder>)>()
+external int recorder_detach_inline_encoder(
+  ffi.Pointer<Recorder> r,
+);
+
+@ffi.Native<
+    ffi.Int Function(ffi.Pointer<Recorder>, ffi.Pointer<ffi.Void>, ffi.Int)>()
+external int recorder_encoder_dequeue_packet(
+  ffi.Pointer<Recorder> r,
+  ffi.Pointer<ffi.Void> outBuf,
+  int cap,
+);
+
+@ffi.Native<ffi.Uint32 Function(ffi.Pointer<Recorder>)>()
+external int recorder_encoder_pending(
+  ffi.Pointer<Recorder> r,
+);
+
+@ffi.Native<
+    ffi.Int Function(ffi.Pointer<Recorder>, ffi.Pointer<ffi.Float>, ffi.Int)>()
+external int recorder_inline_encoder_feed_f32(
+  ffi.Pointer<Recorder> r,
+  ffi.Pointer<ffi.Float> interleaved,
+  int frameCount,
+);
+
+@ffi.Native<ffi.Int Function(ffi.Pointer<Recorder>, ffi.Int)>()
+external int recorder_inline_encoder_flush(
+  ffi.Pointer<Recorder> r,
+  int padWithZeros,
+);
+
 @ffi.Native<ffi.Pointer<Generator> Function()>()
 external ffi.Pointer<Generator> generator_create();
 
@@ -605,6 +644,55 @@ external int generator_get_buffer(
 @ffi.Native<ffi.Int Function(ffi.Pointer<Generator>)>()
 external int generator_get_available_frames(
   ffi.Pointer<Generator> generator,
+);
+
+@ffi.Native<ffi.Pointer<Codec> Function(ffi.Pointer<CodecConfig>)>()
+external ffi.Pointer<Codec> codec_create_null_passthrough(
+  ffi.Pointer<CodecConfig> cfg,
+);
+
+@ffi.Native<
+    ffi.Int Function(ffi.Pointer<CodecRuntime>, ffi.UnsignedInt,
+        ffi.Pointer<CodecConfig>)>(symbol: 'codec_runtime_init')
+external int _codec_runtime_init(
+  ffi.Pointer<CodecRuntime> rt,
+  int initialID,
+  ffi.Pointer<CodecConfig> cfg,
+);
+
+int codec_runtime_init(
+  ffi.Pointer<CodecRuntime> rt,
+  CodecID initialID,
+  ffi.Pointer<CodecConfig> cfg,
+) =>
+    _codec_runtime_init(
+      rt,
+      initialID.value,
+      cfg,
+    );
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<CodecRuntime>)>()
+external void codec_runtime_uninit(
+  ffi.Pointer<CodecRuntime> rt,
+);
+
+@ffi.Native<
+    ffi.Int Function(ffi.Pointer<CodecRuntime>, ffi.Pointer<ffi.Uint8>, ffi.Int,
+        ffi.Pointer<StreamPlayer>)>()
+external int codec_runtime_push_packet(
+  ffi.Pointer<CodecRuntime> rt,
+  ffi.Pointer<ffi.Uint8> packet,
+  int len,
+  ffi.Pointer<StreamPlayer> player,
+);
+
+@ffi.Native<
+    ffi.Int Function(
+        ffi.Pointer<StreamPlayer>, ffi.Pointer<ffi.Void>, ffi.Int)>()
+external int stream_player_push_encoded_packet(
+  ffi.Pointer<StreamPlayer> sp,
+  ffi.Pointer<ffi.Void> data,
+  int len,
 );
 
 @ffi.Native<ffi.Pointer<StreamPlayer> Function()>()
@@ -4910,6 +4998,8 @@ final class CircularBuffer extends ffi.Struct {
   external int read_pos;
 }
 
+final class InlineEncoder extends ffi.Opaque {}
+
 final class CaptureDeviceInfo extends ffi.Struct {
   @ffi.Array.multi([256])
   external ffi.Array<ffi.Char> name;
@@ -5094,6 +5184,8 @@ final class Recorder extends ffi.Struct {
 
   @ma_uint32()
   external int captureGeneration;
+
+  external ffi.Pointer<InlineEncoder> inlineEncoder;
 }
 
 enum RecorderResult {
@@ -5201,4 +5293,75 @@ enum ma_noise_type {
       };
 }
 
+enum CodecID {
+  CODEC_ID_NONE(0),
+  CODEC_ID_OPUS(1),
+  CODEC_ID_PCM(2);
+
+  final int value;
+  const CodecID(this.value);
+
+  static CodecID fromValue(int value) => switch (value) {
+        0 => CODEC_ID_NONE,
+        1 => CODEC_ID_OPUS,
+        2 => CODEC_ID_PCM,
+        _ => throw ArgumentError('Unknown value for CodecID: $value'),
+      };
+}
+
+final class CodecVTable extends ffi.Struct {
+  @ffi.UnsignedInt()
+  external int idAsInt;
+
+  CodecID get id => CodecID.fromValue(idAsInt);
+
+  external ffi
+      .Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<Codec>)>>
+      destroy;
+
+  external ffi.Pointer<
+      ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<Codec>, ffi.Pointer<ffi.Void>, ffi.Int,
+              ffi.Pointer<ffi.Uint8>, ffi.Int)>> encode;
+
+  external ffi.Pointer<
+      ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<Codec>, ffi.Pointer<ffi.Uint8>, ffi.Int,
+              ffi.Pointer<ffi.Void>, ffi.Int)>> decode;
+
+  @ffi.Int()
+  external int frame_size;
+
+  @ffi.Int()
+  external int uses_float;
+}
+
+final class Codec extends ffi.Struct {
+  external CodecVTable vt;
+
+  external ffi.Pointer<ffi.Void> impl;
+}
+
+final class CodecConfig extends ffi.Struct {
+  @ffi.Int()
+  external int sample_rate;
+
+  @ffi.Int()
+  external int channels;
+
+  @ffi.Int()
+  external int bits_per_sample;
+}
+
 final class StreamPlayer extends ffi.Opaque {}
+
+final class CodecRuntime extends ffi.Struct {
+  external ffi.Pointer<Codec> current;
+
+  external CodecConfig cfg;
+
+  external ma_mutex lock;
+
+  @ffi.Uint32()
+  external int lastSeq;
+}

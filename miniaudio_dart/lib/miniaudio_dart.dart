@@ -77,8 +77,11 @@ final class Engine {
 
   /// Switch playback device AND rebuild loaded sounds & stream players.
   /// Generators & StreamPlayers are disposed and recreated (simpler & safe).
-  Future<bool> switchPlaybackDeviceAndRebuild(int index,
-      {List<StreamPlayer>? streamPlayers, List<Generator>? generators}) async {
+  Future<bool> switchPlaybackDeviceAndRebuild(
+    int index, {
+    List<StreamPlayer>? streamPlayers,
+    List<Generator>? generators,
+  }) async {
     if (!isInit) return false;
 
     final soundsToRebind = List<Sound>.from(_loadedSounds);
@@ -220,6 +223,16 @@ final class Engine {
 
     return true;
   }
+
+  /// Gracefully shut down the engine.
+  /// PlatformEngine does not expose `uninit`; we just dispose.
+  Future<void> uninit() async {
+    if (!isInit) return;
+    try {
+      _engine.dispose();
+    } catch (_) {}
+    isInit = false;
+  }
 }
 
 /// A sound.
@@ -284,10 +297,9 @@ final class Sound {
 }
 
 final class Recorder {
-  @override
   Recorder({Engine? mainEngine})
-      : engine = mainEngine ?? Engine(),
-        _recorder = MiniaudioDartPlatformInterface.instance.createRecorder();
+    : engine = mainEngine ?? Engine(),
+      _recorder = MiniaudioDartPlatformInterface.instance.createRecorder();
 
   final PlatformRecorder _recorder;
   Engine engine;
@@ -408,14 +420,36 @@ final class Recorder {
       await streamPlayer.engine.start();
     }
     if (!streamPlayer._isInit) {
-      await streamPlayer.init(
-        channels: ch,
-        sampleRate: sr,
-        bufferMs: bufferMs,
-      );
+      await streamPlayer.init(channels: ch, sampleRate: sr, bufferMs: bufferMs);
       streamPlayer.start();
     }
   }
+
+  /// Enable inline Opus encoding inside the native/Web audio callback.
+  /// Returns false if Opus not available or already enabled but failed to configure.
+  Future<bool> enableOpusEncoding({
+    int targetBitrate = 64000,
+    bool vbr = true,
+    int complexity = 5,
+    bool fec = false,
+    int expectedPacketLossPercent = 0,
+    bool dtx = false,
+  }) => _recorder.enableOpusEncoding(
+    targetBitrate: targetBitrate,
+    vbr: vbr,
+    complexity: complexity,
+    fec: fec,
+    expectedPacketLossPercent: expectedPacketLossPercent,
+    dtx: dtx,
+  );
+
+  /// Number of encoded packets currently queued.
+  int encodedPacketCount() => _recorder.encodedPacketCount();
+
+  /// Dequeues a single framed encoded packet ([codec_id][flags][seq][len][payload]).
+  /// Returns empty Uint8List if none.
+  Uint8List dequeueEncodedPacket({int maxPacketBytes = 1500}) =>
+      _recorder.dequeueEncodedPacket(maxPacketBytes: maxPacketBytes);
 
   /// Disposes of the recorder resources.
   void dispose() {
@@ -459,13 +493,34 @@ final class Recorder {
       }
     }
   }
+
+  int pushInlineEncoderFloat32(Float32List frames) {
+    // Use dynamic to avoid relying on interface additions (optional feature).
+    final dynamic impl = _recorder;
+    try {
+      return impl.pushInlineEncoderFloat32(frames) as int;
+    } catch (_) {
+      throw MiniaudioDartPlatformException(
+        "Inline encoder feed not supported on this platform",
+      );
+    }
+  }
+
+  bool flushInlineEncoder({bool padWithZeros = true}) {
+    final dynamic impl = _recorder;
+    try {
+      return impl.flushInlineEncoder(padWithZeros: padWithZeros) as bool;
+    } catch (_) {
+      return false;
+    }
+  }
 }
 
 /// A generator for waveforms and noise.
 final class Generator {
   Generator({Engine? mainEngine})
-      : engine = mainEngine ?? Engine(),
-        _generator = MiniaudioDartPlatformInterface.instance.createGenerator();
+    : engine = mainEngine ?? Engine(),
+      _generator = MiniaudioDartPlatformInterface.instance.createGenerator();
 
   double get volume => _generator.volume;
   set volume(double value) => _generator.volume = value < 0 ? 0 : value;
@@ -584,9 +639,7 @@ final class StreamPlayer {
       await engine.start();
     }
     if (format != AudioFormat.float32) {
-      throw MiniaudioDartPlatformException(
-        "Only AudioFormat.float32 is supported by StreamPlayer",
-      );
+      throw Exception("Only AudioFormat.float32 is supported by StreamPlayer");
     }
     _channels = channels;
     _sampleRate = sampleRate;
@@ -635,6 +688,14 @@ final class StreamPlayer {
     _ensureInit();
     if (interleaved.isEmpty) return 0;
     return _player!.writeFloat32(interleaved);
+  }
+
+  /// Push a framed encoded packet (Opus/PCM) for immediate decode + playback.
+  /// Packet framing must match recorder inline encoder format.
+  bool pushEncodedPacket(Uint8List packet) {
+    _ensureInit();
+    if (packet.isEmpty) return false;
+    return _player!.pushEncodedPacket(packet);
   }
 
   void dispose() {

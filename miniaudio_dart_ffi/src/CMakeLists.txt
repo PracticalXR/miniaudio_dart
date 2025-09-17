@@ -12,7 +12,9 @@ else()
     set(TARGET_BASENAME miniaudio_dart_web)
 endif()
 
-# Sources (explicit list avoids staging/symlink issues)
+# Ensure opus.cmake is processed BEFORE source list if you want HAVE_OPUS value early
+include(cmake/opus.cmake)
+
 set(MAIN_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/circular_buffer.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/engine.c"
@@ -22,6 +24,11 @@ set(MAIN_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/sound.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/stream_player.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/miniaudio/src/miniaudio.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/codec_packet_queue.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/codec_inline_encoder.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/codec_runtime.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/codec_pcm.c"
+    $<$<BOOL:${HAVE_OPUS}>:${CMAKE_CURRENT_SOURCE_DIR}/src/codec_opus.c>
 )
 
 list(LENGTH MAIN_SOURCES _src_count)
@@ -145,4 +152,36 @@ if(NOT EMSCRIPTEN)
         ARCHIVE DESTINATION lib
         PUBLIC_HEADER DESTINATION include
     )
+endif()
+
+# Link opus to whichever target name we created
+if(HAVE_OPUS)
+    target_link_libraries(${TARGET_BASENAME} PRIVATE opus::opus)
+    target_compile_definitions(${TARGET_BASENAME} PRIVATE HAVE_OPUS=1)
+
+    # Pull interface include dirs.
+    get_target_property(_OPUS_IFACE_INC opus::opus INTERFACE_INCLUDE_DIRECTORIES)
+    if(_OPUS_IFACE_INC)
+        target_include_directories(${TARGET_BASENAME} PRIVATE ${_OPUS_IFACE_INC})
+    endif()
+
+    if(DEFINED OPUS_INCLUDE_DIR AND EXISTS "${OPUS_INCLUDE_DIR}")
+        target_include_directories(${TARGET_BASENAME} PRIVATE "${OPUS_INCLUDE_DIR}")
+    endif()
+
+    # Validate header layout (nested vs flat).
+    set(_OPUS_HEADER_NESTED "${OPUS_INCLUDE_DIR}/opus/opus.h")
+    set(_OPUS_HEADER_FLAT   "${OPUS_INCLUDE_DIR}/opus.h")
+    if(EXISTS "${_OPUS_HEADER_NESTED}")
+        message(STATUS "Opus header (nested): ${_OPUS_HEADER_NESTED}")
+    elseif(EXISTS "${_OPUS_HEADER_FLAT}")
+        message(WARNING "Opus header appears flat at ${_OPUS_HEADER_FLAT}; defining OPUS_HEADER_FLAT")
+        target_compile_definitions(${TARGET_BASENAME} PRIVATE OPUS_HEADER_FLAT=1)
+        # Ensure flat include dir is present.
+        target_include_directories(${TARGET_BASENAME} PRIVATE "${OPUS_INCLUDE_DIR}")
+    else()
+        message(FATAL_ERROR "Cannot locate opus header under ${OPUS_INCLUDE_DIR}")
+    endif()
+else()
+    message(STATUS "HAVE_OPUS=0 (Opus disabled or not found)")
 endif()

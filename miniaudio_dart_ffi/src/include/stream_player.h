@@ -6,8 +6,15 @@
 #include "../external/miniaudio/include/miniaudio.h"
 #include "export.h"
 #include "engine.h"
+#include "codec_runtime.h"   /* add for decoder */
 
+// Forward decls already present
 typedef struct StreamPlayer StreamPlayer;
+
+/* Push a framed encoded packet: [codec_id][flags][seq16][len16][payload...] */
+EXPORT int stream_player_push_encoded_packet(StreamPlayer* sp,
+                                             const void* data,
+                                             int len);
 
 EXPORT StreamPlayer* stream_player_alloc();
 EXPORT void          stream_player_free(StreamPlayer* self);

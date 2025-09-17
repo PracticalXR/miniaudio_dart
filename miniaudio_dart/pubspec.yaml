@@ -1,6 +1,6 @@
 name: miniaudio_dart
 description: A high-level real-time audio playback library based on Miniaudio.
-version: 1.0.4
+version: 1.0.6
 publish_to: none
 repository: https://github.com/MichealReed/miniaudio_dart/tree/master/miniaudio_dart
 

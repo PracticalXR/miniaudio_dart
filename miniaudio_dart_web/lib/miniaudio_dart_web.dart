@@ -1,6 +1,7 @@
 // ignore_for_file: omit_local_variable_types
 
 import "dart:async";
+import "dart:js_interop";
 import "dart:typed_data";
 import "package:miniaudio_dart_platform_interface/miniaudio_dart_platform_interface.dart";
 import "package:miniaudio_dart_web/bindings/miniaudio_dart.dart" as wasm;
@@ -129,6 +130,24 @@ final class WebStreamPlayer implements PlatformStreamPlayer {
     final written =
         wasm.stream_player_write_frames_f32(_self, _scratchPtr, frames);
     return written;
+  }
+
+  @override
+  bool pushEncodedPacket(Uint8List packet) {
+    if (packet.isEmpty) return false;
+    // ensure scratch large enough
+    if (_scratchBytes < packet.length) {
+      final newPtr = mem.allocate(packet.length);
+      if (newPtr == 0) return false;
+      if (_scratchPtr != 0) mem.free(_scratchPtr);
+      _scratchPtr = newPtr;
+      _scratchBytes = packet.length;
+    }
+    final heap = mem.HEAPU8.toDart;
+    heap.setRange(_scratchPtr, _scratchPtr + packet.length, packet);
+    final ok = wasm.stream_player_push_encoded_packet(
+        _self, _scratchPtr, packet.length);
+    return ok == 1;
   }
 
   @override
@@ -327,6 +346,9 @@ final class WebRecorder implements PlatformRecorder {
   int _channels = 1;
   int _sampleRate = 48000;
 
+  bool _opusEnabled = false;
+  bool _isRecording = false;
+
   int get channels => _channels; // expose to higher-level wrapper
   int get sampleRate => _sampleRate; // expose to higher-level wrapper
 
@@ -367,6 +389,8 @@ final class WebRecorder implements PlatformRecorder {
       format: format,
       bufferDurationSeconds: bufferDurationSeconds,
     );
+
+    // Native returns 1 on success (consistent with other APIs). Treat 0/negative as failure.
     if (result != 1) {
       throw MiniaudioDartPlatformException(
         "Failed to initialize recorder stream. Error code: $result",
@@ -378,22 +402,26 @@ final class WebRecorder implements PlatformRecorder {
 
   @override
   void start() {
-    final r = wasm.recorder_start(_self);
-    if (r != RecorderResult.RECORDER_OK) {
-      // Some browsers / build variants may return 0 yet start asynchronously;
-      // double-check recording state before throwing.
-      if (!wasm.recorder_is_recording(_self)) {
-        throw MiniaudioDartPlatformException(
-            "Failed to start recording (code=$r)");
-      }
+    if (_isRecording) return; // idempotent
+    final code = wasm.recorder_start(_self);
+    if (code <= 0) {
+      throw MiniaudioDartPlatformException(
+          "Failed to start recording (code=$code).");
     }
+    _isRecording = true;
   }
 
   @override
   void stop() {
-    if (wasm.recorder_stop(_self) != RecorderResult.RECORDER_OK) {
-      throw MiniaudioDartPlatformException("Failed to stop recording.");
+    // Treat multiple stops as no-op.
+    if (!_isRecording) return;
+    final code = wasm.recorder_stop(_self);
+    // Success codes: 1 (legacy OK), 0 (if C side changed), -5 (already stopped / not recording).
+    if (code < 0 && code != -5) {
+      throw MiniaudioDartPlatformException(
+          "Failed to stop recording (code=$code).");
     }
+    _isRecording = false;
   }
 
   // In class WebRecorder replace readChunk() with unified region logic
@@ -451,6 +479,72 @@ final class WebRecorder implements PlatformRecorder {
 
   @override
   int getCaptureDeviceGeneration() => 0;
+
+  @override
+  Future<bool> enableOpusEncoding({
+    int targetBitrate = 64000,
+    bool vbr = true,
+    int complexity = 5,
+    bool fec = false,
+    int expectedPacketLossPercent = 0,
+    bool dtx = false,
+  }) async {
+    if (_opusEnabled) return true;
+    // Attach (native should allocate encoder & queue).
+    final ok = wasm.recorder_attach_inline_opus(_self, _sampleRate, _channels);
+    if (ok == 1) {
+      _opusEnabled = true;
+      // (Optional) add separate ccall(s) for bitrate/etc. if exported.
+      return true;
+    }
+    return false;
+  }
+
+  @override
+  int encodedPacketCount() {
+    if (!_opusEnabled) return 0;
+    return wasm.recorder_encoder_pending(_self);
+  }
+
+  @override
+  Uint8List dequeueEncodedPacket({int maxPacketBytes = 1500}) {
+    if (!_opusEnabled) return Uint8List(0);
+    final ptr = mem.allocate(maxPacketBytes);
+    try {
+      final len =
+          wasm.recorder_encoder_dequeue_packet(_self, ptr, maxPacketBytes);
+      if (len <= 0) return Uint8List(0);
+      final heap = mem.HEAPU8.toDart;
+      return Uint8List.fromList(heap.sublist(ptr, ptr + len));
+    } finally {
+      mem.free(ptr);
+    }
+  }
+
+  int pushInlineEncoderFloat32(Float32List frames) {
+    if (!_opusEnabled || frames.isEmpty) return 0;
+    final channels = _channels;
+    if (frames.length % channels != 0) {
+      throw MiniaudioDartPlatformException(
+          "Frame count not divisible by channels");
+    }
+    final frameCount = frames.length ~/ channels;
+    final bytes = frames.length * 4;
+    final ptr = mem.allocate(bytes);
+    final heapF32 = mem.HEAPF32.toDart;
+    // Copy (ptr is byte offset; convert to float index)
+    final floatIndex = ptr >> 2;
+    heapF32.setRange(floatIndex, floatIndex + frames.length, frames);
+    final wrote = wasm.recorder_inline_encoder_feed_f32(_self, ptr, frameCount);
+    mem.free(ptr);
+    return wrote;
+  }
+
+  bool flushInlineEncoder({bool padWithZeros = true}) {
+    if (!_opusEnabled) return false;
+    final r = wasm.recorder_inline_encoder_flush(_self, padWithZeros ? 1 : 0);
+    return r == 1;
+  }
 }
 
 final class WebGenerator implements PlatformGenerator {

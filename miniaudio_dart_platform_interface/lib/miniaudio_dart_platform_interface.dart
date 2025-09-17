@@ -108,6 +108,22 @@ abstract interface class PlatformRecorder {
   Future<bool> selectCaptureDeviceByIndex(int index);
   int getCaptureDeviceGeneration();
 
+  // Enable inline Opus encoding (no-op if already enabled or opus unavailable).
+  Future<bool> enableOpusEncoding({
+    int targetBitrate = 64000,
+    bool vbr = true,
+    int complexity = 5,
+    bool fec = false,
+    int expectedPacketLossPercent = 0,
+    bool dtx = false,
+  });
+
+  // Number of encoded packets waiting.
+  int encodedPacketCount();
+
+  // Dequeue one encoded packet (framed). Returns empty list if none.
+  Uint8List dequeueEncodedPacket({int maxPacketBytes = 1500});
+
   void dispose();
 }
 
@@ -145,6 +161,9 @@ abstract interface class PlatformStreamPlayer {
   void clear();
   // Write interleaved Float32 samples; returns frames written.
   int writeFloat32(Float32List interleaved);
+  // Push a single framed encoded packet (codec_id header etc.).
+  // Returns true if accepted/decoded.
+  bool pushEncodedPacket(Uint8List packet);
   void dispose();
 }
 

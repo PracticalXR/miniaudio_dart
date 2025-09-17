@@ -10,14 +10,16 @@
 #include "circular_buffer.h"
 #include "export.h"
 
+/* Forward declare InlineEncoder to avoid including codec_inline_encoder.h here. */
+typedef struct InlineEncoder InlineEncoder;
+
 typedef struct {
     char        name[256];
     ma_device_id id;
     ma_bool32   isDefault;
 } CaptureDeviceInfo;
 
-typedef struct
-{
+typedef struct Recorder {
     ma_encoder encoder;
     ma_encoder_config encoder_config;
     ma_device device;
@@ -47,6 +49,8 @@ typedef struct
     CaptureDeviceInfo* captureInfos;
     ma_uint32 captureCount;
     ma_uint32 captureGeneration;
+
+    InlineEncoder* inlineEncoder; /* NULL if encoder disabled */
 } Recorder;
 
 // Success positive (1), errors negative (easier to test in Dart)
@@ -94,5 +98,14 @@ EXPORT int       recorder_select_capture_device_by_index(Recorder* r, ma_uint32 
 /* Generation counter (increments when devices refreshed or switched) */
 EXPORT ma_uint32 recorder_get_capture_device_generation(Recorder* r);
 EXPORT void recorder_free_capture_cache(Recorder* r);
+
+/* Exported inline encoder control API */
+EXPORT int recorder_attach_inline_opus(Recorder* r, int sample_rate, int channels);
+EXPORT int recorder_detach_inline_encoder(Recorder* r);
+EXPORT int recorder_encoder_dequeue_packet(Recorder* r, void* outBuf, int cap);
+EXPORT uint32_t recorder_encoder_pending(Recorder* r);
+EXPORT int recorder_inline_encoder_feed_f32(Recorder* r, const float* interleaved, int frameCount);
+/* padWithZeros: 1 => pad and emit residual, 0 => only emit if full frame */
+EXPORT int recorder_inline_encoder_flush(Recorder* r, int padWithZeros);
 
 #endif // RECORD_H

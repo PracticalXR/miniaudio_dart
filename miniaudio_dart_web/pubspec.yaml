@@ -1,6 +1,6 @@
 name: miniaudio_dart_web
 description: Web implementation of the MiniaudioDart package.
-version: 1.0.4
+version: 1.0.6
 publish_to: none
 repository: https://github.com/MichealReed/miniaudio_dart/tree/master/miniaudio_dart_web
 

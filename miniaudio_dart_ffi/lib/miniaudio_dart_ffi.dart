@@ -118,8 +118,7 @@ final class FfiStreamPlayer implements PlatformStreamPlayer {
   @override
   int writeFloat32(Float32List interleaved) {
     if (interleaved.isEmpty) return 0;
-
-    final int floats = interleaved.length; // elements, not bytes
+    final int floats = interleaved.length;
     if (floats % _channels != 0) {
       throw MiniaudioDartPlatformException(
         "writeFloat32: floats ($floats) not divisible by channels ($_channels)",
@@ -127,14 +126,11 @@ final class FfiStreamPlayer implements PlatformStreamPlayer {
     }
     final int frames = floats ~/ _channels;
 
-    // (Re)allocate scratch buffer if needed. calloc ensures proper alignment.
     if (_scratch == nullptr || _scratchFloats < floats) {
       if (_scratch != nullptr) calloc.free(_scratch);
-      _scratch = calloc<Float>(floats); // aligned
+      _scratch = calloc<Float>(floats);
       _scratchFloats = floats;
     }
-
-    // Copy interleaved data into native buffer.
     _scratch.asTypedList(floats).setAll(0, interleaved);
 
     final int written = bindings.stream_player_write_frames_f32(
@@ -142,9 +138,25 @@ final class FfiStreamPlayer implements PlatformStreamPlayer {
       _scratch,
       frames,
     );
-
-    // written is frames; caller can track backpressure from this.
     return written;
+  }
+
+  // push encoded packet (Opus/PCM framed)
+  @override
+  bool pushEncodedPacket(Uint8List packet) {
+    if (packet.isEmpty) return false;
+    final ptr = calloc<Uint8>(packet.length);
+    try {
+      ptr.asTypedList(packet.length).setAll(0, packet);
+      final ok = bindings.stream_player_push_encoded_packet(
+        _self,
+        ptr.cast(),
+        packet.length,
+      );
+      return ok == 1;
+    } finally {
+      calloc.free(ptr);
+    }
   }
 
   @override
@@ -155,7 +167,7 @@ final class FfiStreamPlayer implements PlatformStreamPlayer {
       _scratchFloats = 0;
     }
     bindings.stream_player_uninit(_self);
-    bindings.stream_player_free(_self); // NEW
+    bindings.stream_player_free(_self);
   }
 }
 
@@ -348,6 +360,8 @@ class FfiRecorder implements PlatformRecorder {
   int _channels = 0;
   int _sampleRate = 0;
 
+  bool _opusEnabled = false;
+
   @override
   Future<void> initFile(
     String filename, {
@@ -503,6 +517,71 @@ class FfiRecorder implements PlatformRecorder {
   @override
   int getCaptureDeviceGeneration() =>
       bindings.recorder_get_capture_device_generation(_self);
+
+  @override
+  Future<bool> enableOpusEncoding({
+    int targetBitrate = 64000,
+    bool vbr = true,
+    int complexity = 5,
+    bool fec = false,
+    int expectedPacketLossPercent = 0,
+    bool dtx = false,
+  }) async {
+    if (_opusEnabled) return true;
+    final ok =
+        bindings.recorder_attach_inline_opus(_self, _sampleRate, _channels);
+    if (ok == 1) {
+      _opusEnabled = true;
+      // Optional: apply controls if you expose them:
+      // bindings.recorder_opus_set_bitrate(_self, targetBitrate);
+      return true;
+    }
+    return false;
+  }
+
+  @override
+  int encodedPacketCount() {
+    if (!_opusEnabled) return 0;
+    return bindings.recorder_encoder_pending(_self);
+  }
+
+  @override
+  Uint8List dequeueEncodedPacket({int maxPacketBytes = 1500}) {
+    if (!_opusEnabled) return Uint8List(0);
+    final ptr = calloc<Uint8>(maxPacketBytes);
+    try {
+      final len = bindings.recorder_encoder_dequeue_packet(
+          _self, ptr.cast(), maxPacketBytes);
+      if (len <= 0) return Uint8List(0);
+      return Uint8List.fromList(ptr.asTypedList(len));
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
+  int pushInlineEncoderFloat32(Float32List frames) {
+    if (frames.isEmpty || !_opusEnabled) return 0;
+    final int channels = _channels;
+    if (frames.length % channels != 0) {
+      throw MiniaudioDartPlatformException(
+          "Frame count not divisible by channels");
+    }
+    final frameCount = frames.length ~/ channels;
+    final ptr = calloc<Float>(frames.length);
+    try {
+      ptr.asTypedList(frames.length).setAll(0, frames);
+      return bindings.recorder_inline_encoder_feed_f32(_self, ptr, frameCount);
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
+  bool flushInlineEncoder({bool padWithZeros = true}) {
+    if (!_opusEnabled) return false;
+    final r =
+        bindings.recorder_inline_encoder_flush(_self, padWithZeros ? 1 : 0);
+    return r == 1;
+  }
 }
 
 // generator ffi
