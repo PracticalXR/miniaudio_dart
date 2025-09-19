@@ -1,279 +1,341 @@
 #include "../include/stream_player.h"
-#include "../include/engine.h"  // for Engine* helper
-#include "../include/codec_runtime.h"
-#include "../include/codec_packet_format.h"
+#include "../include/engine.h"
+#include <stdlib.h>
 #include <string.h>
-#include <stddef.h> // offsetof
+#include <stddef.h>
 
-// container-of to recover sp_data_source from ma_data_source*
-#define SP_CONTAINER_OF(ptr, type, member) ((type*)((char*)(ptr) - offsetof(type, member)))
-
+/* Data source wrapper */
 typedef struct {
-    // Use the public base type, not the opaque ma_data_source.
     ma_data_source_base base;
     struct StreamPlayer* owner;
 } sp_data_source;
 
 struct StreamPlayer {
-    ma_engine* engine;
-    ma_sound   sound;
+    ma_engine*      engine;
+    ma_sound        sound;
+    ma_pcm_rb       rb;
 
-    ma_format  format;
-    ma_uint32  channels;
-    ma_uint32  sampleRate;
-    ma_uint32  frameSize; // bytes per frame
+    ma_format       format;
+    ma_uint32       channels;
+    ma_uint32       sampleRate;
+    ma_uint32       frameSizeBytes;
 
-    ma_pcm_rb  rb;
-    sp_data_source ds;
+    sp_data_source  ds;
+    int             started;
+    float           volume;
+    int             initialized;  // Add initialization flag
 
-    ma_bool32  started;
-    float      volume;
+    CodecRuntime    codecRT;
+    int             codecInitialized;
+    int             allowCodecPackets;
 
-    CodecRuntime codecRT;
-    int          codecRTInitialized;
+    float*          decodeBuf;
+    int             decodeBufFrames;
 };
 
-/******** vtable callbacks ********/
+#define SP_CONTAINER_OF(ptr, type, member) ((type*)((char*)(ptr) - offsetof(type, member)))
 
-static ma_result sp_on_read(ma_data_source* pDS, void* pFramesOut, ma_uint64 frameCount, ma_uint64* pFramesRead)
+static ma_result sp_on_read(ma_data_source* pDS,
+                            void* pFramesOut,
+                            ma_uint64 frameCount,
+                            ma_uint64* pFramesRead)
 {
-    sp_data_source* ds = SP_CONTAINER_OF(pDS, sp_data_source, base);
-    StreamPlayer* sp = ds->owner;
-
+    sp_data_source* dsw = SP_CONTAINER_OF(pDS, sp_data_source, base);
+    StreamPlayer* sp = dsw->owner;
     ma_uint8* out = (ma_uint8*)pFramesOut;
-    ma_uint64 framesRemaining = frameCount;
+    ma_uint64 remaining = frameCount;
 
-    while (framesRemaining > 0) {
-        ma_uint32 req = (ma_uint32)((framesRemaining > 0x7FFFFFFF) ? 0x7FFFFFFF : framesRemaining);
+    while(remaining > 0) {
+        ma_uint32 req = (ma_uint32)((remaining > 0x7FFFFFFF) ? 0x7FFFFFFF : remaining);
         void* pRead = NULL;
-        if (ma_pcm_rb_acquire_read(&sp->rb, &req, &pRead) != MA_SUCCESS || req == 0) {
-            // Underrun: fill remainder with silence to keep clock running.
-            const ma_uint64 bytesRemain = framesRemaining * sp->frameSize;
-            memset(out, 0, (size_t)bytesRemain);
-            out += bytesRemain;
-            framesRemaining = 0;
+        if(ma_pcm_rb_acquire_read(&sp->rb, &req, &pRead) != MA_SUCCESS || req == 0) {
+            /* Underrun: fill silence */
+            size_t silenceBytes = (size_t)remaining * sp->frameSizeBytes;
+            memset(out, 0, silenceBytes);
+            out += silenceBytes;
+            remaining = 0;
             break;
         }
-
-        memcpy(out, pRead, (size_t)req * sp->frameSize);
+        memcpy(out, pRead, (size_t)req * sp->frameSizeBytes);
         ma_pcm_rb_commit_read(&sp->rb, req);
-        out += (size_t)req * sp->frameSize;
-        framesRemaining -= req;
+        out += (size_t)req * sp->frameSizeBytes;
+        remaining -= req;
     }
-
-    if (pFramesRead) *pFramesRead = frameCount;
+    if(pFramesRead) *pFramesRead = frameCount;
     return MA_SUCCESS;
 }
 
-static ma_result sp_on_seek(ma_data_source* pDS, ma_uint64 frameIndex)
-{
-    sp_data_source* ds = SP_CONTAINER_OF(pDS, sp_data_source, base);
-    StreamPlayer* sp = ds->owner;
-    if (frameIndex == 0) {
-        ma_pcm_rb_reset(&sp->rb);
-        return MA_SUCCESS;
-    }
+static ma_result sp_on_seek(ma_data_source* pDS, ma_uint64 frameIndex) {
+    (void)pDS;
+    (void)frameIndex;
     return MA_INVALID_OPERATION;
 }
 
-static ma_result sp_on_get_data_format(ma_data_source* pDS,
-                                       ma_format* pFormat, ma_uint32* pChannels, ma_uint32* pSampleRate,
-                                       ma_channel* pChannelMap, size_t channelMapCap)
+static ma_result sp_on_format(ma_data_source* pDS,
+                              ma_format* pFormat,
+                              ma_uint32* pChannels,
+                              ma_uint32* pSampleRate,
+                              ma_channel* pChannelMap,
+                              size_t channelMapCap)
 {
-    sp_data_source* ds = SP_CONTAINER_OF(pDS, sp_data_source, base);
-    StreamPlayer* sp = ds->owner;
-    if (pFormat)     *pFormat = sp->format;
-    if (pChannels)   *pChannels = sp->channels;
-    if (pSampleRate) *pSampleRate = sp->sampleRate;
     (void)pChannelMap; (void)channelMapCap;
+    sp_data_source* dsw = SP_CONTAINER_OF(pDS, sp_data_source, base);
+    StreamPlayer* sp = dsw->owner;
+    if(pFormat)     *pFormat    = sp->format;
+    if(pChannels)   *pChannels  = sp->channels;
+    if(pSampleRate) *pSampleRate= sp->sampleRate;
     return MA_SUCCESS;
 }
 
-// Static vtable for our data source
 static ma_data_source_vtable g_sp_vtable = {
     sp_on_read,
     sp_on_seek,
-    sp_on_get_data_format,
-    NULL  // onGetCursor (optional)
+    sp_on_format,
+    NULL
 };
 
-/******** public API ********/
+StreamPlayerConfig stream_player_config_default(int channels, int sampleRate) {
+    StreamPlayerConfig cfg;
+    cfg.format             = ma_format_f32;
+    cfg.channels           = channels;
+    cfg.sampleRate         = sampleRate;
+    cfg.bufferMilliseconds = 200;
+    cfg.allowCodecPackets  = 1;
+    cfg.decodeAccumFrames  = 0;
+    return cfg;
+}
 
-StreamPlayer* stream_player_alloc() {
+static int sp_realloc_decode_buf(StreamPlayer* sp, int frames) {
+    if(frames <= sp->decodeBufFrames) return 1;
+    float* nb = (float*)realloc(sp->decodeBuf,
+                      (size_t)frames * sp->channels * sizeof(float));
+    if(!nb) return 0;
+    sp->decodeBuf = nb;
+    sp->decodeBufFrames = frames;
+    return 1;
+}
+
+StreamPlayer* stream_player_alloc(void) {
+    // Use ma_malloc to match ma_free
     StreamPlayer* sp = (StreamPlayer*)ma_malloc(sizeof(StreamPlayer), NULL);
+    if (sp) {
+        memset(sp, 0, sizeof(StreamPlayer));
+    }
     return sp;
 }
 
-void stream_player_free(StreamPlayer* self) {
-    if (self) {
-        ma_free(self, NULL);
+void stream_player_free(StreamPlayer* sp) {
+    if(!sp) return;
+    stream_player_uninit(sp);
+    if (sp->decodeBuf) {
+        ma_free(sp->decodeBuf, NULL);
     }
+    ma_free(sp, NULL);  // Use ma_free to match ma_malloc
 }
 
-int stream_player_init(StreamPlayer* self,
+int stream_player_init(StreamPlayer* sp,
                        ma_engine* engine,
-                       ma_format format, int channels, int sample_rate,
-                       uint32_t buffer_ms)
+                       const StreamPlayerConfig* cfg)
 {
-    if (self == NULL || engine == NULL) return 0;
+    if(!sp || !engine || !cfg) return 0;
+    if(sp->initialized) return 0;  // Prevent double-init
 
-    self->engine = engine;
-    self->format = format;
-    self->channels = (ma_uint32)channels;
-    self->sampleRate = (ma_uint32)sample_rate;
-    self->frameSize = (ma_uint32)(ma_get_bytes_per_sample(format) * channels);
-    self->started = MA_FALSE;
-    self->volume = 1.0f;
+    sp->engine     = engine;
+    sp->format     = cfg->format;
+    sp->channels   = (ma_uint32)cfg->channels;
+    sp->sampleRate = (ma_uint32)cfg->sampleRate;
+    sp->frameSizeBytes = (ma_uint32)(ma_get_bytes_per_sample(sp->format) * sp->channels);
+    sp->volume     = 1.0f;
+    sp->allowCodecPackets = cfg->allowCodecPackets ? 1 : 0;
 
-    // Ring buffer capacity in frames.
-    ma_uint64 capacityFrames = ((ma_uint64)buffer_ms * self->sampleRate) / 1000;
-    if (capacityFrames < 1024) capacityFrames = 1024; // minimum
+    ma_uint64 capacityFrames = ((ma_uint64)cfg->bufferMilliseconds * sp->sampleRate) / 1000;
+    if(capacityFrames < 1024) capacityFrames = 1024;
+    if(capacityFrames > 0x7FFFFFFFULL) capacityFrames = 0x7FFFFFFF;
 
-    // Note: provide all args, including allocation callbacks.
-    if (ma_pcm_rb_init(self->format,
-                       self->channels,
-                       (ma_uint32)capacityFrames,
-                       NULL,            // pOptionalPreallocatedBuffer
-                       NULL,            // pAllocationCallbacks
-                       &self->rb) != MA_SUCCESS)
-    {
+    if(ma_pcm_rb_init(sp->format,
+                      sp->channels,
+                      (ma_uint32)capacityFrames,
+                      NULL,
+                      NULL,
+                      &sp->rb) != MA_SUCCESS) {
         return 0;
     }
 
-    // Initialize data source base with our vtable.
-    self->ds.owner = self;
-    ma_data_source_config cfg = ma_data_source_config_init();
-    cfg.vtable = &g_sp_vtable;
-    if (ma_data_source_init(&cfg, (ma_data_source*)&self->ds.base) != MA_SUCCESS) {
-        ma_pcm_rb_uninit(&self->rb);
+    sp->ds.owner = sp;
+    ma_data_source_config dsc = ma_data_source_config_init();
+    dsc.vtable = &g_sp_vtable;
+    if(ma_data_source_init(&dsc, (ma_data_source*)&sp->ds.base) != MA_SUCCESS) {
+        ma_pcm_rb_uninit(&sp->rb);
         return 0;
     }
 
-    // Hook into engine as a sound from data source.
-    if (ma_sound_init_from_data_source(
-            engine,
-            (ma_data_source*)&self->ds.base,
-            MA_SOUND_FLAG_NO_PITCH | MA_SOUND_FLAG_NO_SPATIALIZATION,
-            NULL,
-            &self->sound) != MA_SUCCESS)
-    {
-        ma_data_source_uninit((ma_data_source*)&self->ds.base);
-        ma_pcm_rb_uninit(&self->rb);
+    if(ma_sound_init_from_data_source(engine,
+                                      (ma_data_source*)&sp->ds.base,
+                                      MA_SOUND_FLAG_NO_PITCH | MA_SOUND_FLAG_NO_SPATIALIZATION,
+                                      NULL,
+                                      &sp->sound) != MA_SUCCESS) {
+        ma_data_source_uninit((ma_data_source*)&sp->ds.base);
+        ma_pcm_rb_uninit(&sp->rb);
         return 0;
     }
+    ma_sound_set_volume(&sp->sound, sp->volume);
 
-    ma_sound_set_volume(&self->sound, self->volume);
-
-    CodecConfig cc = { .sample_rate = self->sampleRate, .channels = self->channels, .bits_per_sample = 32 };
-    if (codec_runtime_init(&self->codecRT, CODEC_ID_NONE, &cc)) {
-        self->codecRTInitialized = 1;
-    } else {
-        self->codecRTInitialized = 0;
+    CodecConfig ccfg = {
+        .sample_rate     = sp->sampleRate,
+        .channels        = sp->channels,
+        .bits_per_sample = 32
+    };
+    if(codec_runtime_init(&sp->codecRT, CODEC_ID_PCM, &ccfg)) {
+        sp->codecInitialized = 1;
     }
 
+    sp->initialized = 1;  // Mark as initialized
     return 1;
-}
-
-void stream_player_uninit(StreamPlayer* self)
-{
-    if (!self) return;
-    ma_sound_uninit(&self->sound);
-    ma_data_source_uninit((ma_data_source*)&self->ds.base);
-    ma_pcm_rb_uninit(&self->rb);
-
-    if (self->codecRTInitialized) {
-        codec_runtime_uninit(&self->codecRT);
-        self->codecRTInitialized = 0;
-    }
-}
-
-int stream_player_start(StreamPlayer* self)
-{
-    if (!self) return 0;
-    if (self->started) return 1;
-    if (ma_sound_start(&self->sound) != MA_SUCCESS) return 0;
-    self->started = MA_TRUE;
-    return 1;
-}
-
-int stream_player_stop(StreamPlayer* self)
-{
-    if (!self) return 0;
-    if (!self->started) return 1;
-    ma_sound_stop(&self->sound);
-    self->started = MA_FALSE;
-    return 1;
-}
-
-void stream_player_clear(StreamPlayer* self)
-{
-    if (!self) return;
-    ma_pcm_rb_reset(&self->rb);
-}
-
-void stream_player_set_volume(StreamPlayer* self, float volume)
-{
-    if (!self) return;
-    self->volume = volume;
-    ma_sound_set_volume(&self->sound, volume);
-}
-
-size_t stream_player_write_frames_f32(StreamPlayer* self,
-                                      const float* interleaved,
-                                      size_t frames)
-{
-    if (!self || !interleaved || frames == 0) return 0;
-
-    size_t totalWritten = 0;
-    const size_t bytesPerFrame = self->frameSize;
-
-    while (totalWritten < frames) {
-        ma_uint32 space = ma_pcm_rb_available_write(&self->rb);
-        if (space == 0) {
-            // Buffer is full: drop newest input to avoid corruption/glitches.
-            break;
-        }
-
-        ma_uint32 req = (ma_uint32)((frames - totalWritten) < space ? (frames - totalWritten) : space);
-        void* pWrite = NULL;
-        if (ma_pcm_rb_acquire_write(&self->rb, &req, &pWrite) != MA_SUCCESS || req == 0) break;
-
-        memcpy(pWrite,
-               (const ma_uint8*)interleaved + (totalWritten * bytesPerFrame),
-               (size_t)req * bytesPerFrame);
-
-        ma_pcm_rb_commit_write(&self->rb, req);
-        totalWritten += req;
-    }
-
-    return totalWritten;
 }
 
 int stream_player_init_with_engine(StreamPlayer* self,
-                                   Engine* engine,
-                                   ma_format format, int channels, int sample_rate,
-                                   uint32_t buffer_ms)
+                                   void* engineWrapper,
+                                   const StreamPlayerConfig* cfg)
 {
-    if (self == NULL || engine == NULL) return 0;
+    if (self == NULL || engineWrapper == NULL || cfg == NULL) return 0;
+    
+    // Cast void* back to Engine* (your wrapper type)
+    Engine* engine = (Engine*)engineWrapper;
     ma_engine* mae = engine_get_ma_engine(engine);
     if (mae == NULL) return 0;
-    // Forward to the standard initializer that takes a ma_engine*
-    return stream_player_init(self, mae, format, channels, sample_rate, buffer_ms);
+    
+    // Forward to the standard initializer with individual parameters
+    return stream_player_init(self, mae, cfg);
+}
+
+void stream_player_uninit(StreamPlayer* sp) {
+    if(!sp || !sp->initialized) return;  // Use initialization flag instead of static guard
+    
+    if(sp->started) {
+        ma_sound_stop(&sp->sound);
+        sp->started = 0;
+    }
+    if(sp->codecInitialized) {
+        codec_runtime_uninit(&sp->codecRT);
+        sp->codecInitialized = 0;
+    }
+    ma_sound_uninit(&sp->sound);
+    ma_data_source_uninit((ma_data_source*)&sp->ds.base);
+    ma_pcm_rb_uninit(&sp->rb);
+    
+    sp->initialized = 0;  // Mark as uninitialized
+}
+
+/* Called by codec runtime to deliver decoded PCM. */
+int codec_runtime_on_decoded_frames(CodecRuntime* rt,
+                                    const float* pcm,
+                                    int frames,
+                                    void* userData)
+{
+    (void)rt;
+    StreamPlayer* sp = (StreamPlayer*)userData;
+    if(!sp || frames <= 0 || !pcm) return 0;
+
+    int remaining = frames;
+    int offsetFrames = 0;
+    while(remaining > 0) {
+        ma_uint32 space = ma_pcm_rb_available_write(&sp->rb);
+        if(space == 0) {
+            /* Drop oldest half to make space */
+            ma_uint32 availRead = ma_pcm_rb_available_read(&sp->rb);
+            if(availRead == 0) return 0; /* nothing to drop */
+            ma_pcm_rb_seek_read(&sp->rb, availRead / 2);
+            continue;
+        }
+        ma_uint32 writeNow = (ma_uint32)((remaining < (int)space) ? remaining : (int)space);
+        void* pWrite = NULL;
+        if(ma_pcm_rb_acquire_write(&sp->rb, &writeNow, &pWrite) != MA_SUCCESS || writeNow==0) break;
+        memcpy(pWrite,
+               pcm + offsetFrames * sp->channels,
+               (size_t)writeNow * sp->channels * sizeof(float));
+        ma_pcm_rb_commit_write(&sp->rb, writeNow);
+        remaining     -= (int)writeNow;
+        offsetFrames  += (int)writeNow;
+    }
+    return frames;
+}
+
+int stream_player_start(StreamPlayer* sp) {
+    if(!sp) return 0;
+    if(sp->started) return 1;
+    if(ma_sound_start(&sp->sound) != MA_SUCCESS) return 0;
+    sp->started = 1;
+    return 1;
+}
+
+int stream_player_stop(StreamPlayer* sp) {
+    if(!sp) return 0;
+    if(!sp->started) return 1;
+    ma_sound_stop(&sp->sound);
+    sp->started = 0;
+    return 1;
+}
+
+void stream_player_clear(StreamPlayer* sp) {
+    if(!sp) return;
+    ma_pcm_rb_reset(&sp->rb);
+}
+
+void stream_player_set_volume(StreamPlayer* sp, float volume) {
+    if(!sp) return;
+    sp->volume = volume;
+    ma_sound_set_volume(&sp->sound, volume);
+}
+
+float stream_player_get_volume(StreamPlayer* sp) {
+    return sp ? sp->volume : 1.0f;
+}
+
+size_t stream_player_write_frames_f32(StreamPlayer* sp,
+                                      const float* frames,
+                                      size_t frameCount)
+{
+    if(!sp || !frames || frameCount==0) return 0;
+    size_t written = 0;
+    while(written < frameCount) {
+        ma_uint32 space = ma_pcm_rb_available_write(&sp->rb);
+        if(space == 0) break;
+        ma_uint32 req = (ma_uint32)((frameCount - written) < space ?
+                                     (frameCount - written) : space);
+        void* pWrite = NULL;
+        if(ma_pcm_rb_acquire_write(&sp->rb, &req, &pWrite) != MA_SUCCESS || req==0) break;
+        memcpy(pWrite,
+               frames + written * sp->channels,
+               (size_t)req * sp->channels * sizeof(float));
+        ma_pcm_rb_commit_write(&sp->rb, req);
+        written += req;
+    }
+    return written;
 }
 
 int stream_player_push_encoded_packet(StreamPlayer* sp,
-                                      const void* data,
-                                      int len)
+                                      const void* packet,
+                                      int packetBytes)
 {
-    if (!sp || !data || len <= CODEC_FRAME_HEADER_BYTES) return 0;
-    if (!sp->codecRTInitialized) {
-        CodecConfig cc = { .sample_rate = sp->sampleRate, .channels = sp->channels, .bits_per_sample = 32 };
-        if (!codec_runtime_init(&sp->codecRT, CODEC_ID_NONE, &cc))
-            return 0;
-        sp->codecRTInitialized = 1;
+    if(!sp || !packet || packetBytes <= CODEC_FRAME_HEADER_BYTES) return 0;
+    if(!sp->allowCodecPackets) return 0;
+
+    const uint8_t* pkt = (const uint8_t*)packet;
+    CodecID cid = (CodecID)pkt[0];
+
+    if(!sp->codecInitialized || codec_runtime_current_id(&sp->codecRT) != cid) {
+        if(sp->codecInitialized) {
+            codec_runtime_uninit(&sp->codecRT);
+            sp->codecInitialized = 0;
+        }
+        CodecConfig ccfg = {
+            .sample_rate     = sp->sampleRate,
+            .channels        = sp->channels,
+            .bits_per_sample = 32
+        };
+        if(!codec_runtime_init(&sp->codecRT, cid, &ccfg)) return 0;
+        sp->codecInitialized = 1;
     }
-    return codec_runtime_push_packet(&sp->codecRT,
-                                     (const uint8_t*)data,
-                                     len,
-                                     sp);
+
+    return codec_runtime_push_packet(&sp->codecRT, pkt, packetBytes, sp);
 }

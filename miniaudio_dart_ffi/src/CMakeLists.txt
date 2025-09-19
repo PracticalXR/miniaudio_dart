@@ -25,9 +25,9 @@ set(MAIN_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/stream_player.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/miniaudio/src/miniaudio.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/codec_packet_queue.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/codec_inline_encoder.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/codec_runtime.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/codec_pcm.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/crosscoder.c"
     $<$<BOOL:${HAVE_OPUS}>:${CMAKE_CURRENT_SOURCE_DIR}/src/codec_opus.c>
 )
 

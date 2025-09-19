@@ -8,6 +8,7 @@
 # endif
 #include "../include/codec.h"
 #include <stdlib.h>
+#include <stdio.h>
 
 static const char* g_opus_last_err = NULL;
 const char* codec_opus_last_error(void){ return g_opus_last_err ? g_opus_last_err : "ok"; }
@@ -33,8 +34,19 @@ static void opus_destroy(Codec* c){
 
 static int opus_encode_wrap(Codec* c,const void* pcmFrames,int frameCount,uint8_t* out,int cap){
     OpusPair* p=(OpusPair*)c->impl;
-    if(!p||frameCount!=p->frame_size) return -1;
-    return opus_encode_float(p->enc,(const float*)pcmFrames,frameCount,out,cap);
+    if(!p) return -1;
+    if(frameCount!=p->frame_size){
+        g_opus_last_err="bad frameCount";
+        fprintf(stderr,"[opus] ERR frameCount=%d expected=%d\n", frameCount, p->frame_size);
+        return -1;
+    }
+    int ret = opus_encode_float(p->enc,(const float*)pcmFrames,frameCount,out,cap);
+    if(ret<0){
+        g_opus_last_err="opus_encode_float";
+        fprintf(stderr,"[opus] encode err=%d sr=%d ch=%d fs=%d\n",
+                ret, p->sample_rate, p->channels, p->frame_size);
+    }
+    return ret;
 }
 
 static int opus_decode_wrap(Codec* c,const uint8_t* packet,int packetLen,void* pcmOut,int maxFrames){

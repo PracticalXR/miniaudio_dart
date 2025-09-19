@@ -6,30 +6,30 @@
 #elif __has_include("miniaudio.h")
 #include "miniaudio.h"
 #else
-#error "miniaudio.h not found for codec_runtime"
+#error "miniaudio.h not found"
 #endif
 
-#include "codec.h"   /* for Codec / CodecID */
+#include "codec.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Forward declare to avoid include cycle */
 struct StreamPlayer;
 typedef struct StreamPlayer StreamPlayer;
 
 typedef struct CodecRuntime {
-    Codec*     current;
+    Codec*      current;
     CodecConfig cfg;
-    ma_mutex   lock;
+    ma_mutex    lock;
 } CodecRuntime;
 
-int  codec_runtime_init(CodecRuntime* rt, CodecID initialID, const CodecConfig* cfg);
-void codec_runtime_uninit(CodecRuntime* rt);
-int  codec_runtime_push_packet(CodecRuntime* rt, const uint8_t* packet, int len, StreamPlayer* player);
+int     codec_runtime_init(CodecRuntime* rt, CodecID initialID, const CodecConfig* cfg);
+void    codec_runtime_uninit(CodecRuntime* rt);
+int     codec_runtime_push_packet(CodecRuntime* rt, const uint8_t* packet, int len, StreamPlayer* player);
+CodecID codec_runtime_current_id(const CodecRuntime* rt);
 
 #ifdef __cplusplus
 }
 #endif
-#endif
+#endif /* CODEC_RUNTIME_H */

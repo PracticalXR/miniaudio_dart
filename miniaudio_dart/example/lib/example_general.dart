@@ -371,7 +371,7 @@ class _ExamplePageState extends State<ExamplePage> {
     if (!recorder.isRecording) return;
     final framesAvail = recorder.getAvailableFrames();
     if (framesAvail <= 0) return;
-    final chunk = recorder.readChunk(maxFrames: framesAvail);
+    final chunk = recorder.readChunk(maxFrames: framesAvail) as Float32List;
     if (chunk.isNotEmpty) {
       recordingBuffer.add(chunk);
       totalRecordedFrames += (chunk.length ~/ recorder.channels);

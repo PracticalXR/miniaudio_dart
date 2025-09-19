@@ -4,8 +4,9 @@ import "dart:async";
 import "dart:js_interop";
 import "dart:typed_data";
 import "package:miniaudio_dart_platform_interface/miniaudio_dart_platform_interface.dart";
-import "package:miniaudio_dart_web/bindings/miniaudio_dart.dart" as wasm;
 import "package:miniaudio_dart_web/bindings/memory_web.dart" as mem;
+import "package:miniaudio_dart_web/bindings/miniaudio_dart.dart" as wasm;
+import "package:web/web.dart" as web;
 
 // Provide the function consumed by the stub import.
 MiniaudioDartPlatformInterface registeredInstance() => MiniaudioDartWeb._();
@@ -17,18 +18,31 @@ class MiniaudioDartWeb extends MiniaudioDartPlatformInterface {
 
   @override
   PlatformEngine createEngine() {
-    final self = wasm.engine_alloc();
-    if (self == 0) throw MiniaudioDartPlatformOutOfMemoryException();
-    return WebEngine(self);
+    final eng = wasm.engine_alloc();
+    if (eng == 0) {
+      throw MiniaudioDartPlatformOutOfMemoryException();
+    }
+    return WebEngine(eng);
   }
 
   @override
-  PlatformRecorder createRecorder() => WebRecorder(wasm.recorder_create());
+  PlatformRecorder createRecorder() {
+    final rec = wasm.recorder_create();
+    if (rec == 0) {
+      throw MiniaudioDartPlatformOutOfMemoryException();
+    }
+    return WebRecorder(rec);
+  }
 
   @override
-  PlatformGenerator createGenerator() => WebGenerator(wasm.generator_create());
+  PlatformGenerator createGenerator() {
+    final gen = wasm.generator_create();
+    if (gen == 0) {
+      throw MiniaudioDartPlatformOutOfMemoryException();
+    }
+    return WebGenerator(gen);
+  }
 
-  // Streaming player factory
   @override
   PlatformStreamPlayer createStreamPlayer({
     required PlatformEngine engine,
@@ -37,33 +51,156 @@ class MiniaudioDartWeb extends MiniaudioDartPlatformInterface {
     required int sampleRate,
     int bufferMs = 240,
   }) {
-    if (format != AudioFormat.float32) {
-      throw MiniaudioDartPlatformException(
-        "Web StreamPlayer supports only AudioFormat.float32",
-      );
-    }
-    final eng = (engine as WebEngine)._self;
+    final engWrapper = (engine as WebEngine)._self;
     final sp = wasm.stream_player_alloc();
     if (sp == 0) {
       throw MiniaudioDartPlatformOutOfMemoryException();
     }
-    final ok = wasm.stream_player_init_with_engine(
-        sp, eng, format, channels, sampleRate, bufferMs);
-    if (ok == 0) {
-      wasm.stream_player_free(sp); // free on failure
-      throw MiniaudioDartPlatformException("stream_player_init failed");
+
+    // Create StreamPlayerConfig struct (matching FFI)
+    final cfgPtr = mem.allocate(28); // sizeof(StreamPlayerConfig)
+    try {
+      mem.writeI32(cfgPtr, format); // formatAsInt
+      mem.writeI32(cfgPtr + 4, channels); // channels
+      mem.writeI32(cfgPtr + 8, sampleRate); // sampleRate
+      mem.writeI32(cfgPtr + 12, bufferMs); // bufferMilliseconds
+      mem.writeI32(cfgPtr + 16, 1); // allowCodecPackets = true
+      mem.writeI32(cfgPtr + 20, 0); // decodeAccumFrames = 0
+
+      final ok = wasm.stream_player_init_with_engine(sp, engWrapper, cfgPtr);
+      if (ok != 1) {
+        wasm.stream_player_free(sp);
+        throw MiniaudioDartPlatformException("stream_player_init failed.");
+      }
+    } finally {
+      mem.free(cfgPtr);
     }
+
     return WebStreamPlayer._(sp, channels);
+  }
+
+  @override
+  PlatformCrossCoder createCrossCoder() {
+    return WebCrossCoder();
   }
 }
 
-// Optional interface; align with your platform_interface
+// Web CrossCoder implementation (matching FFI)
+class WebCrossCoder implements PlatformCrossCoder {
+  int? _self;
+  int _channels = 1;
+
+  @override
+  Future<bool> init(int sampleRate, int channels, int codecId,
+      {int application = 2049}) async {
+    final configPtr = mem.allocate(12); // sizeof(CodecConfig)
+    try {
+      mem.writeI32(configPtr, sampleRate); // sample_rate
+      mem.writeI32(configPtr + 4, channels); // channels
+      mem.writeI32(configPtr + 8, 32); // bits_per_sample
+
+      _self = wasm.crosscoder_create(configPtr, codecId, application, 1);
+      _channels = channels; // track channels for proper frame count
+      return _self != null && _self! != 0;
+    } finally {
+      mem.free(configPtr);
+    }
+  }
+
+  @override
+  int get frameSize {
+    if (_self == null || _self == 0) return 0;
+    return wasm.crosscoder_frame_size(_self!);
+  }
+
+  @override
+  (Uint8List, int) encodeFrames(Float32List frames) {
+    if (_self == null || _self == 0 || frames.isEmpty) return (Uint8List(0), 0);
+
+    final framesPtr = mem.allocate(frames.length * 4); // Float32 = 4 bytes
+    final outPacketPtr = mem.allocate(4096);
+    final outBytesPtr = mem.allocate(4); // for actual bytes written
+
+    try {
+      // Copy frames to WASM memory
+      final heap = mem.HEAPF32.toDart;
+      final offset = framesPtr >> 2; // Float32 offset
+      heap.setAll(offset, frames);
+
+      // Pass number of PCM frames (samples / channels), NOT packets
+      final frameCount = frames.length ~/ _channels;
+      if (frameCount <= 0) return (Uint8List(0), 0);
+
+      final result = wasm.crosscoder_encode_push_f32(
+        _self!,
+        framesPtr,
+        frameCount,
+        outPacketPtr,
+        4096,
+        outBytesPtr,
+      );
+
+      final bytesWritten = mem.readI32(outBytesPtr);
+
+      if (result > 0 && bytesWritten > 0) {
+        final heapU8 = mem.HEAPU8.toDart;
+        final pkt = Uint8List.fromList(
+            heapU8.sublist(outPacketPtr, outPacketPtr + bytesWritten));
+        return (pkt, bytesWritten);
+      }
+      return (Uint8List(0), 0);
+    } finally {
+      mem.free(framesPtr);
+      mem.free(outPacketPtr);
+      mem.free(outBytesPtr);
+    }
+  }
+
+  @override
+  Float32List decodePacket(Uint8List packet) {
+    if (_self == null || _self == 0 || packet.isEmpty) return Float32List(0);
+
+    final packetPtr = mem.allocate(packet.length);
+    final outFramesPtr = mem.allocate(4800 * 4); // Max frames * 4 bytes
+
+    try {
+      // Copy packet to WASM memory
+      final heapU8 = mem.HEAPU8.toDart;
+      heapU8.setAll(packetPtr, packet);
+
+      final decodedFrames = wasm.crosscoder_decode_packet(
+        _self!,
+        packetPtr,
+        packet.length,
+        outFramesPtr,
+        4800,
+      );
+
+      if (decodedFrames > 0) {
+        return mem.readF32(outFramesPtr, decodedFrames);
+      }
+      return Float32List(0);
+    } finally {
+      mem.free(packetPtr);
+      mem.free(outFramesPtr);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_self != null && _self! != 0) {
+      wasm.crosscoder_destroy(_self!);
+      _self = null;
+    }
+  }
+}
+
+// Web StreamPlayer implementation (matching FFI)
 final class WebStreamPlayer implements PlatformStreamPlayer {
   WebStreamPlayer._(this._self, this._channels);
   final int _self;
   final int _channels;
 
-  // Reusable scratch buffer (in bytes).
   int _scratchPtr = 0;
   int _scratchBytes = 0;
 
@@ -74,7 +211,6 @@ final class WebStreamPlayer implements PlatformStreamPlayer {
   set volume(double v) {
     final clamped = (v.isNaN ? 0.0 : v).clamp(0.0, 100.0).toDouble();
     _volume = clamped;
-    // If you have a wasm export, call it; otherwise apply gain in writeFloat32.
     try {
       wasm.stream_player_set_volume(_self, clamped);
     } catch (_) {}
@@ -83,16 +219,16 @@ final class WebStreamPlayer implements PlatformStreamPlayer {
   @override
   void start() {
     final ok = wasm.stream_player_start(_self);
-    if (ok == 0) {
-      throw MiniaudioDartPlatformException("stream_player_start failed");
+    if (ok != 1) {
+      throw MiniaudioDartPlatformException("stream_player_start failed.");
     }
   }
 
   @override
   void stop() {
     final ok = wasm.stream_player_stop(_self);
-    if (ok == 0) {
-      throw MiniaudioDartPlatformException("stream_player_stop failed");
+    if (ok != 1) {
+      throw MiniaudioDartPlatformException("stream_player_stop failed.");
     }
   }
 
@@ -101,8 +237,6 @@ final class WebStreamPlayer implements PlatformStreamPlayer {
     wasm.stream_player_clear(_self);
   }
 
-  // Write interleaved Float32 samples; returns frames written.
-  // Ensures 4-byte alignment and correct byte length.
   @override
   int writeFloat32(Float32List interleaved) {
     if (interleaved.isEmpty) return 0;
@@ -114,7 +248,6 @@ final class WebStreamPlayer implements PlatformStreamPlayer {
     final frames = floats ~/ _channels;
     final bytes = interleaved.lengthInBytes;
 
-    // Ensure aligned, contiguous buffer in WASM heap.
     if (_scratchBytes < bytes) {
       final newPtr = mem.allocate(bytes);
       if (newPtr == 0) {
@@ -133,9 +266,18 @@ final class WebStreamPlayer implements PlatformStreamPlayer {
   }
 
   @override
+  bool pushData(dynamic data) {
+    if (data is Float32List) {
+      return writeFloat32(data) > 0;
+    } else if (data is Uint8List) {
+      return pushEncodedPacket(data);
+    }
+    return false;
+  }
+
+  @override
   bool pushEncodedPacket(Uint8List packet) {
     if (packet.isEmpty) return false;
-    // ensure scratch large enough
     if (_scratchBytes < packet.length) {
       final newPtr = mem.allocate(packet.length);
       if (newPtr == 0) return false;
@@ -162,13 +304,166 @@ final class WebStreamPlayer implements PlatformStreamPlayer {
   }
 }
 
+// Web Recorder implementation (matching FFI)
+class WebRecorder implements PlatformRecorder {
+  WebRecorder(this._self);
+  final int _self;
+  int _channels = 0;
+  RecorderCodecConfig? _codecConfig;
+
+  @override
+  Future<void> initStream({
+    int sampleRate = 48000,
+    int channels = 1,
+    int format = AudioFormat.float32,
+    int bufferDurationSeconds = 5,
+    RecorderCodecConfig? codecConfig,
+  }) async {
+    final cfgPtr = mem.allocate(28); // sizeof(RecorderConfig)
+    final codecCfgPtr = codecConfig != null ? mem.allocate(20) : 0;
+
+    try {
+      // Fill RecorderConfig struct
+      mem.writeI32(cfgPtr, sampleRate); // sampleRate
+      mem.writeI32(cfgPtr + 4, channels); // channels
+      mem.writeI32(cfgPtr + 8, format); // formatAsInt
+      mem.writeI32(cfgPtr + 12, bufferDurationSeconds); // bufferDurationSeconds
+      mem.writeI32(cfgPtr + 16, codecCfgPtr); // codecConfig pointer
+      mem.writeI32(cfgPtr + 20, 0); // autoStart = false
+
+      // Fill codec config if provided
+      if (codecConfig != null && codecCfgPtr != 0) {
+        mem.writeI32(codecCfgPtr, codecConfig.codec.value); // codecAsInt
+        mem.writeI32(codecCfgPtr + 4, codecConfig.opusApplication);
+        mem.writeI32(codecCfgPtr + 8, codecConfig.opusBitrate);
+        mem.writeI32(codecCfgPtr + 12, codecConfig.opusComplexity);
+        mem.writeI32(codecCfgPtr + 16, codecConfig.opusVBR ? 1 : 0);
+      }
+
+      final ok = await wasm.recorder_init(_self, cfgPtr);
+      if (ok != 1) {
+        throw MiniaudioDartPlatformException("Failed to initialize recorder.");
+      }
+
+      _channels = channels;
+      _codecConfig = codecConfig;
+    } finally {
+      mem.free(cfgPtr);
+      if (codecCfgPtr != 0) mem.free(codecCfgPtr);
+    }
+  }
+
+  @override
+  RecorderCodec get codec => _codecConfig?.codec ?? RecorderCodec.pcm;
+
+  @override
+  Future<bool> updateCodecConfig(RecorderCodecConfig codecConfig) async {
+    // Not implemented in web yet
+    return false;
+  }
+
+  @override
+  dynamic readChunk({int maxFrames = 512}) {
+    if (_channels == 0) {
+      return codec == RecorderCodec.pcm ? Float32List(0) : Uint8List(0);
+    }
+
+    final ptrOut = mem.allocate(4);
+    final framesOut = mem.allocate(4);
+    try {
+      final ok = wasm.recorder_acquire_read_region(_self, ptrOut, framesOut);
+      if (ok == 0) {
+        return codec == RecorderCodec.pcm ? Float32List(0) : Uint8List(0);
+      }
+
+      final available = mem.readI32(framesOut);
+      if (available <= 0) {
+        return codec == RecorderCodec.pcm ? Float32List(0) : Uint8List(0);
+      }
+
+      final use = available > maxFrames ? maxFrames : available;
+      final dataPtr = mem.readI32(ptrOut);
+      if (dataPtr == 0) {
+        return codec == RecorderCodec.pcm ? Float32List(0) : Uint8List(0);
+      }
+
+      dynamic result;
+      if (codec == RecorderCodec.pcm) {
+        // PCM data - return as Float32List
+        final floats = use * _channels;
+        result = mem.readF32(dataPtr, floats);
+      } else {
+        // Encoded data - return as Uint8List
+        final heapU8 = mem.HEAPU8.toDart;
+        result = Uint8List.fromList(heapU8.sublist(dataPtr, dataPtr + use));
+      }
+
+      wasm.recorder_commit_read_frames(_self, use);
+      return result;
+    } finally {
+      mem.free(ptrOut);
+      mem.free(framesOut);
+    }
+  }
+
+  @override
+  dynamic getBuffer(int framesToRead) => framesToRead <= 0
+      ? (codec == RecorderCodec.pcm ? Float32List(0) : Uint8List(0))
+      : readChunk(maxFrames: framesToRead);
+
+  @override
+  void start() {
+    final result = wasm.recorder_start(_self);
+    if (result != 1) {
+      throw MiniaudioDartPlatformException("Failed to start recorder");
+    }
+  }
+
+  @override
+  void stop() {
+    final result = wasm.recorder_stop(_self);
+    if (result != 1) {
+      throw MiniaudioDartPlatformException("Failed to stop recorder");
+    }
+  }
+
+  @override
+  bool get isRecording => wasm.recorder_is_recording(_self) == 1;
+
+  @override
+  int getAvailableFrames() => wasm.recorder_get_available_frames(_self);
+
+  double _captureGain = 1.0;
+  @override
+  double get captureGain => _captureGain;
+  @override
+  set captureGain(double value) {
+    _captureGain = value;
+    // Web implementation would call wasm function if available
+  }
+
+  @override
+  void dispose() => wasm.recorder_destroy(_self);
+
+  @override
+  Future<List<(String name, bool isDefault)>> enumerateCaptureDevices() async =>
+      [("Default Input", true)];
+
+  @override
+  Future<bool> selectCaptureDeviceByIndex(int index) async => index == 0;
+
+  @override
+  int getCaptureDeviceGeneration() => 0;
+}
+
+// Web Engine implementation (matching FFI)
 final class WebEngine implements PlatformEngine {
   WebEngine(this._self);
   final int _self;
 
   @override
   EngineState state = EngineState.uninit;
-  Future<void>? _initPending; // serialize init
+  Future<void>? _initPending;
   int _playbackGen = 0;
 
   @override
@@ -181,9 +476,18 @@ final class WebEngine implements PlatformEngine {
     final c = Completer<void>();
     _initPending = c.future;
     try {
+      // Try to resume AudioContext first (Web requirement)
+      try {
+        await web.window.navigator.mediaDevices
+            .getUserMedia(web.MediaStreamConstraints(audio: true.toJS))
+            .toDart;
+      } catch (e) {
+        // Continue anyway - getUserMedia might not be needed for playback
+      }
+
       final ok = await wasm.engine_init(_self, periodMs);
-      if (ok == 0) {
-        throw MiniaudioDartPlatformException('engine_init failed (0)');
+      if (ok != 1) {
+        throw MiniaudioDartPlatformException('Failed to init the engine.');
       }
       state = EngineState.init;
       c.complete();
@@ -205,19 +509,24 @@ final class WebEngine implements PlatformEngine {
   void start() {
     final pending = _initPending;
     if (pending != null) {
-      // Defer start until init finishes to avoid Asyncify re-entry/races.
       pending.whenComplete(() {
-        wasm.engine_start(_self);
+        final result = wasm.engine_start(_self);
+        if (result != 1) {
+          throw MiniaudioDartPlatformException("Failed to start the engine.");
+        }
       });
       return;
     }
-    wasm.engine_start(_self);
+    final result = wasm.engine_start(_self);
+    if (result != 1) {
+      throw MiniaudioDartPlatformException("Failed to start the engine.");
+    }
   }
 
   @override
   Future<PlatformSound> loadSound(AudioData audioData) async {
     if (_initPending != null) {
-      await _initPending; // wait for engine to be ready
+      await _initPending;
     }
     final bytes = audioData.buffer.lengthInBytes;
     if (bytes == 0) {
@@ -230,24 +539,22 @@ final class WebEngine implements PlatformEngine {
       final sound = wasm.sound_alloc();
       if (sound == 0) {
         mem.free(dataPtr);
-        throw MiniaudioDartPlatformOutOfMemoryException();
+        throw MiniaudioDartPlatformException("Failed to allocate a sound.");
       }
 
-      // IMPORTANT:
-      // - C expects data_size in BYTES for both raw PCM and encoded paths.
-      // - C expects (format, sampleRate, channels) order.
       final result = wasm.engine_load_sound(
         _self,
         sound,
         dataPtr,
-        bytes, // pass bytes
+        bytes,
         audioData.format,
-        audioData.sampleRate, // sampleRate first
-        audioData.channels, // channels last
+        audioData.sampleRate,
+        audioData.channels,
       );
-      if (result == 0) {
+      if (result != 1) {
+        wasm.sound_unload(sound);
         mem.free(dataPtr);
-        throw MiniaudioDartPlatformException("engine_load_sound failed (0)");
+        throw MiniaudioDartPlatformException("Failed to load a sound.");
       }
 
       return WebSound._fromPtrs(sound, dataPtr);
@@ -257,16 +564,14 @@ final class WebEngine implements PlatformEngine {
     }
   }
 
-  // WebAudio cannot select output devices (no setSinkId for AudioContext).
   @override
   Future<List<(String name, bool isDefault)>> enumeratePlaybackDevices() async {
-    _playbackGen++; // simulate change observation on each manual refresh
+    _playbackGen++;
     return [("Default Output", true)];
   }
 
   @override
   Future<bool> selectPlaybackDeviceByIndex(int index) async {
-    // Only one device; still bump generation for API consistency
     _playbackGen++;
     return index == 0;
   }
@@ -275,6 +580,7 @@ final class WebEngine implements PlatformEngine {
   int getPlaybackDeviceGeneration() => _playbackGen;
 }
 
+// Web Sound implementation (matching FFI)
 final class WebSound implements PlatformSound {
   WebSound._fromPtrs(this._self, this._dataPtr);
 
@@ -307,7 +613,6 @@ final class WebSound implements PlatformSound {
 
   @override
   void unload() {
-    // Releases native sound and frees the copied buffer (must stay alive for decoder/buffer lifetime).
     wasm.sound_unload(_self);
     mem.free(_dataPtr);
   }
@@ -315,16 +620,16 @@ final class WebSound implements PlatformSound {
   @override
   void play() {
     final ok = wasm.sound_play(_self);
-    if (ok == 0) {
-      throw MiniaudioDartPlatformException("sound_play failed");
+    if (ok != 1) {
+      throw MiniaudioDartPlatformException("Failed to play the sound.");
     }
   }
 
   @override
   void replay() {
     final ok = wasm.sound_replay(_self);
-    if (ok == 0) {
-      throw MiniaudioDartPlatformException("sound_replay failed");
+    if (ok != 1) {
+      throw MiniaudioDartPlatformException("Failed to replay the sound.");
     }
   }
 
@@ -340,217 +645,10 @@ final class WebSound implements PlatformSound {
   }
 }
 
-final class WebRecorder implements PlatformRecorder {
-  WebRecorder(this._self);
-  final int _self;
-  int _channels = 1;
-  int _sampleRate = 48000;
-
-  bool _opusEnabled = false;
-  bool _isRecording = false;
-
-  int get channels => _channels; // expose to higher-level wrapper
-  int get sampleRate => _sampleRate; // expose to higher-level wrapper
-
-  @override
-  Future<void> initFile(
-    String filename, {
-    int sampleRate = 48000,
-    int channels = 1,
-    int format = AudioFormat.float32,
-  }) async {
-    final result = await wasm.recorder_init_file(
-      _self,
-      filename,
-      sampleRate: sampleRate,
-      channels: channels,
-      format: format,
-    );
-    if (result != RecorderResult.RECORDER_OK) {
-      throw MiniaudioDartPlatformException(
-        "Failed to initialize recorder with file. Error code: $result",
-      );
-    }
-    _channels = channels;
-    _sampleRate = sampleRate; // track actual
-  }
-
-  @override
-  Future<void> initStream({
-    int sampleRate = 48000,
-    int channels = 1,
-    int format = AudioFormat.float32,
-    int bufferDurationSeconds = 5,
-  }) async {
-    final result = await wasm.recorder_init_stream(
-      _self,
-      sampleRate: sampleRate,
-      channels: channels,
-      format: format,
-      bufferDurationSeconds: bufferDurationSeconds,
-    );
-
-    // Native returns 1 on success (consistent with other APIs). Treat 0/negative as failure.
-    if (result != 1) {
-      throw MiniaudioDartPlatformException(
-        "Failed to initialize recorder stream. Error code: $result",
-      );
-    }
-    _channels = channels;
-    _sampleRate = sampleRate; // track actual
-  }
-
-  @override
-  void start() {
-    if (_isRecording) return; // idempotent
-    final code = wasm.recorder_start(_self);
-    if (code <= 0) {
-      throw MiniaudioDartPlatformException(
-          "Failed to start recording (code=$code).");
-    }
-    _isRecording = true;
-  }
-
-  @override
-  void stop() {
-    // Treat multiple stops as no-op.
-    if (!_isRecording) return;
-    final code = wasm.recorder_stop(_self);
-    // Success codes: 1 (legacy OK), 0 (if C side changed), -5 (already stopped / not recording).
-    if (code < 0 && code != -5) {
-      throw MiniaudioDartPlatformException(
-          "Failed to stop recording (code=$code).");
-    }
-    _isRecording = false;
-  }
-
-  // In class WebRecorder replace readChunk() with unified region logic
-  @override
-  Float32List readChunk({int maxFrames = 512}) {
-    if (_channels <= 0) return Float32List(0);
-
-    // Allocate two 32-bit ints for (ptr, frames)
-    final ptrSlot = mem.allocate(4);
-    final framesSlot = mem.allocate(4);
-    try {
-      final ok = wasm.recorder_acquire_read_region(_self, ptrSlot, framesSlot);
-      if (ok == 0) return Float32List(0);
-
-      final framesAvail = mem.readI32(framesSlot);
-      if (framesAvail <= 0) return Float32List(0);
-
-      final use = framesAvail > maxFrames ? maxFrames : framesAvail;
-      final ptr = mem.readI32(ptrSlot);
-      if (ptr == 0) return Float32List(0);
-
-      final floats = use * _channels;
-      final data = mem.readF32(ptr, floats);
-      wasm.recorder_commit_read_frames(_self, use);
-      return data;
-    } finally {
-      mem.free(ptrSlot);
-      mem.free(framesSlot);
-    }
-  }
-
-  @override
-  Float32List getBuffer(int framesToRead) {
-    if (framesToRead <= 0) return Float32List(0);
-    return readChunk(maxFrames: framesToRead);
-  }
-
-  @override
-  int getAvailableFrames() => wasm.recorder_get_available_frames(_self);
-
-  @override
-  bool get isRecording => wasm.recorder_is_recording(_self);
-
-  @override
-  void dispose() {
-    wasm.recorder_destroy(_self);
-  }
-
-  @override
-  Future<List<(String name, bool isDefault)>> enumerateCaptureDevices() async =>
-      [("Default Input", true)];
-
-  @override
-  Future<bool> selectCaptureDeviceByIndex(int index) async => index == 0;
-
-  @override
-  int getCaptureDeviceGeneration() => 0;
-
-  @override
-  Future<bool> enableOpusEncoding({
-    int targetBitrate = 64000,
-    bool vbr = true,
-    int complexity = 5,
-    bool fec = false,
-    int expectedPacketLossPercent = 0,
-    bool dtx = false,
-  }) async {
-    if (_opusEnabled) return true;
-    // Attach (native should allocate encoder & queue).
-    final ok = wasm.recorder_attach_inline_opus(_self, _sampleRate, _channels);
-    if (ok == 1) {
-      _opusEnabled = true;
-      // (Optional) add separate ccall(s) for bitrate/etc. if exported.
-      return true;
-    }
-    return false;
-  }
-
-  @override
-  int encodedPacketCount() {
-    if (!_opusEnabled) return 0;
-    return wasm.recorder_encoder_pending(_self);
-  }
-
-  @override
-  Uint8List dequeueEncodedPacket({int maxPacketBytes = 1500}) {
-    if (!_opusEnabled) return Uint8List(0);
-    final ptr = mem.allocate(maxPacketBytes);
-    try {
-      final len =
-          wasm.recorder_encoder_dequeue_packet(_self, ptr, maxPacketBytes);
-      if (len <= 0) return Uint8List(0);
-      final heap = mem.HEAPU8.toDart;
-      return Uint8List.fromList(heap.sublist(ptr, ptr + len));
-    } finally {
-      mem.free(ptr);
-    }
-  }
-
-  int pushInlineEncoderFloat32(Float32List frames) {
-    if (!_opusEnabled || frames.isEmpty) return 0;
-    final channels = _channels;
-    if (frames.length % channels != 0) {
-      throw MiniaudioDartPlatformException(
-          "Frame count not divisible by channels");
-    }
-    final frameCount = frames.length ~/ channels;
-    final bytes = frames.length * 4;
-    final ptr = mem.allocate(bytes);
-    final heapF32 = mem.HEAPF32.toDart;
-    // Copy (ptr is byte offset; convert to float index)
-    final floatIndex = ptr >> 2;
-    heapF32.setRange(floatIndex, floatIndex + frames.length, frames);
-    final wrote = wasm.recorder_inline_encoder_feed_f32(_self, ptr, frameCount);
-    mem.free(ptr);
-    return wrote;
-  }
-
-  bool flushInlineEncoder({bool padWithZeros = true}) {
-    if (!_opusEnabled) return false;
-    final r = wasm.recorder_inline_encoder_flush(_self, padWithZeros ? 1 : 0);
-    return r == 1;
-  }
-}
-
-final class WebGenerator implements PlatformGenerator {
+// Web Generator implementation (matching FFI)
+class WebGenerator implements PlatformGenerator {
   WebGenerator(this._self);
   final int _self;
-  int _channels = 1;
 
   late var _volume = wasm.generator_get_volume(_self);
   @override
@@ -580,7 +678,6 @@ final class WebGenerator implements PlatformGenerator {
         "Failed to initialize generator. Error code: $result",
       );
     }
-    _channels = channels;
   }
 
   @override
@@ -627,16 +724,15 @@ final class WebGenerator implements PlatformGenerator {
 
   @override
   Float32List getBuffer(int framesToRead) {
-    final floatsToRead = framesToRead * _channels;
-    final ptr = mem.allocate(floatsToRead * 4);
+    final ptr = mem.allocate(framesToRead * 4); // Float32 = 4 bytes
     try {
       final framesRead = wasm.generator_get_buffer(_self, ptr, framesToRead);
       if (framesRead < 0) {
         throw MiniaudioDartPlatformException(
-          "Failed to read generator data. Error code: $framesRead",
+          "Failed to get generator buffer. Error code: $framesRead",
         );
       }
-      return mem.readF32(ptr, framesRead * _channels);
+      return mem.readF32(ptr, framesRead);
     } finally {
       mem.free(ptr);
     }
@@ -646,7 +742,5 @@ final class WebGenerator implements PlatformGenerator {
   int getAvailableFrames() => wasm.generator_get_available_frames(_self);
 
   @override
-  void dispose() {
-    wasm.generator_destroy(_self);
-  }
+  void dispose() => wasm.generator_destroy(_self);
 }

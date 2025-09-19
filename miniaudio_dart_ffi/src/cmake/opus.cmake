@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.10)
 # Options
 option(OPUS_USE_SYSTEM "Prefer a system-installed libopus if available" ON)
 set(OPUS_VERSION "1.5.2" CACHE STRING "libopus version to fetch when not using system")
-option(OPUS_DISABLE_INTRINSICS "Disable opus SIMD/intrinsics (safer for cross/wasm)" ON)
+set(OPUS_DISABLE_INTRINSICS ON CACHE STRING "Disable opus SIMD/intrinsics (safer for cross/wasm)" FORCE)
 
 set(_OPUS_DL_DIR "${CMAKE_CURRENT_BINARY_DIR}/_deps")
 set(_OPUS_TARBALL "${_OPUS_DL_DIR}/opus-${OPUS_VERSION}.tar.gz")

@@ -36,7 +36,7 @@ int codec_runtime_init(CodecRuntime* rt, CodecID initialID, const CodecConfig* c
     rt->cfg = *cfg;
     if (ma_mutex_init(&rt->lock) != MA_SUCCESS) return 0;
     /* Lazy: only create if a concrete initial codec requested */
-    if (initialID != CODEC_ID_NONE)
+    if (initialID != CODEC_ID_PCM)
         rt->current = make_codec(initialID, &rt->cfg);
     return 1;
 }
@@ -44,9 +44,8 @@ int codec_runtime_init(CodecRuntime* rt, CodecID initialID, const CodecConfig* c
 void codec_runtime_uninit(CodecRuntime* rt) {
     if (!rt) return;
     ma_mutex_lock(&rt->lock);
-    if (rt->current && rt->current->vt.destroy) {
+    if (rt->current && rt->current->vt.destroy)
         rt->current->vt.destroy(rt->current);
-    }
     rt->current = NULL;
     ma_mutex_unlock(&rt->lock);
     ma_mutex_uninit(&rt->lock);
@@ -59,11 +58,9 @@ int codec_runtime_push_packet(CodecRuntime* rt, const uint8_t* packet, int len,
     CodecID cid = (CodecID)packet[0];
     uint16_t plen;
     memcpy(&plen, packet + 4, 2);
-    if ((int)(plen + CODEC_FRAME_HEADER_BYTES) != len) {
+    if ((int)(plen + CODEC_FRAME_HEADER_BYTES) != len)
         return 0;
-    }
 
-    /* Ensure correct codec */
     ma_mutex_lock(&rt->lock);
     if (!rt->current || rt->current->vt.id != cid) {
         if (rt->current && rt->current->vt.destroy)
@@ -74,7 +71,7 @@ int codec_runtime_push_packet(CodecRuntime* rt, const uint8_t* packet, int len,
     ma_mutex_unlock(&rt->lock);
     if (!c) return 0;
 
-    float decodeBuf[5760 * 2]; /* 120 ms @48k stereo max */
+    float decodeBuf[5760 * 2]; /* 120ms @48k stereo */
     const int maxFrames = 5760;
     int frames = c->vt.decode(c,
                               packet + CODEC_FRAME_HEADER_BYTES,
@@ -85,4 +82,9 @@ int codec_runtime_push_packet(CodecRuntime* rt, const uint8_t* packet, int len,
     if (frames > maxFrames) frames = maxFrames;
     stream_player_write_frames_f32(player, decodeBuf, (size_t)frames);
     return frames;
+}
+
+CodecID codec_runtime_current_id(const CodecRuntime* rt) {
+    if (!rt || !rt->current) return CODEC_ID_PCM;
+    return rt->current->vt.id;
 }

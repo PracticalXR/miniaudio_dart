@@ -46,3 +46,6 @@ Float32List readF32(int ptr, int count) {
 
 // Helper to read a 32-bit signed int (pointer/frame counts)
 int readI32(int addr) => HEAP32.toDart[addr >> 2];
+
+// Helper to write a 32-bit signed int
+void writeI32(int addr, int value) => HEAP32.toDart[addr >> 2] = value;

@@ -1,13 +1,13 @@
-#ifndef MA_CODEC_ABI_H
-#define MA_CODEC_ABI_H
+#ifndef CODEC_H
+#define CODEC_H
+
 #include <stdint.h>
 
 #define CODEC_VTABLE_VERSION 1
 
 typedef enum {
-    CODEC_ID_NONE = 0,
+    CODEC_ID_PCM = 0,
     CODEC_ID_OPUS = 1,
-    CODEC_ID_PCM  = 2
 } CodecID;
 
 typedef struct {
@@ -37,4 +37,7 @@ struct Codec {
 Codec* codec_create_opus(const CodecConfig* cfg, int application);
 Codec* codec_create_null_passthrough(const CodecConfig* cfg);
 
+#ifdef __cplusplus
+}
 #endif
+#endif /* CODEC_H */

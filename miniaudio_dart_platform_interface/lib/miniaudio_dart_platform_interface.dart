@@ -33,6 +33,9 @@ abstract class MiniaudioDartPlatformInterface {
     required int sampleRate,
     int bufferMs = 240,
   });
+
+  // Add CrossCoder factory method (standalone)
+  PlatformCrossCoder createCrossCoder();
 }
 
 enum EngineState { uninit, init, started }
@@ -73,22 +76,41 @@ abstract interface class PlatformSound {
   bool rebindToEngine(PlatformEngine engine) => false;
 }
 
+// Add codec config classes
+enum RecorderCodec {
+  pcm(0),
+  opus(1);
+
+  const RecorderCodec(this.value);
+  final int value;
+}
+
+class RecorderCodecConfig {
+  final RecorderCodec codec;
+  final int opusApplication;
+  final int opusBitrate;
+  final int opusComplexity;
+  final bool opusVBR;
+
+  const RecorderCodecConfig({
+    required this.codec,
+    this.opusApplication = 2049, // OPUS_APPLICATION_AUDIO
+    this.opusBitrate = 64000,
+    this.opusComplexity = 5,
+    this.opusVBR = true,
+  });
+}
+
 abstract interface class PlatformRecorder {
   factory PlatformRecorder() =>
       MiniaudioDartPlatformInterface.instance.createRecorder();
-
-  Future<void> initFile(
-    String filename, {
-    int sampleRate = 48000, // normalized
-    int channels = 1,
-    int format = AudioFormat.float32,
-  });
 
   Future<void> initStream({
     int sampleRate = 48000,
     int channels = 1,
     int format = AudioFormat.float32,
     int bufferDurationSeconds = 5,
+    RecorderCodecConfig? codecConfig, // Add missing parameter
   });
 
   void start();
@@ -96,33 +118,28 @@ abstract interface class PlatformRecorder {
   int getAvailableFrames();
   bool get isRecording;
 
-  /// Preferred API: pull up to maxFrames frames using ring buffer acquire/commit.
-  /// Returns 0-length list if none available. Implementations should NOT block.
-  Float32List readChunk({int maxFrames = 512});
+  /// Unified read API - returns PCM frames or encoded packets based on codec
+  dynamic readChunk({int maxFrames = 512});
+  dynamic getBuffer(int framesToRead);
 
-  /// Legacy API (may be deprecated in future). Implementations may map this
-  /// to readChunk internally.
-  Float32List getBuffer(int framesToRead);
+  /// Update codec configuration at runtime
+  Future<bool> updateCodecConfig(RecorderCodecConfig codecConfig);
+
+  /// Get current codec in use
+  RecorderCodec get codec;
+
+  /// Capture gain control
+  double get captureGain;
+  set captureGain(double value);
+
+  // Remove old encoder methods
+  // Future<bool> enableOpusEncoding(...) - REMOVED
+  // int encodedPacketCount() - REMOVED
+  // Uint8List dequeueEncodedPacket(...) - REMOVED
 
   Future<List<(String name, bool isDefault)>> enumerateCaptureDevices();
   Future<bool> selectCaptureDeviceByIndex(int index);
   int getCaptureDeviceGeneration();
-
-  // Enable inline Opus encoding (no-op if already enabled or opus unavailable).
-  Future<bool> enableOpusEncoding({
-    int targetBitrate = 64000,
-    bool vbr = true,
-    int complexity = 5,
-    bool fec = false,
-    int expectedPacketLossPercent = 0,
-    bool dtx = false,
-  });
-
-  // Number of encoded packets waiting.
-  int encodedPacketCount();
-
-  // Dequeue one encoded packet (framed). Returns empty list if none.
-  Uint8List dequeueEncodedPacket({int maxPacketBytes = 1500});
 
   void dispose();
 }
@@ -152,6 +169,21 @@ abstract interface class PlatformGenerator {
   void dispose();
 }
 
+abstract interface class PlatformCrossCoder {
+  factory PlatformCrossCoder() =>
+      MiniaudioDartPlatformInterface.instance.createCrossCoder();
+
+  Future<bool> init(int sampleRate, int channels, int codecId,
+      {int application = 2049});
+  int get frameSize;
+
+  // Update to match C API signature with outBytes
+  (Uint8List packet, int bytesWritten) encodeFrames(Float32List frames);
+  Float32List decodePacket(Uint8List packet);
+
+  void dispose();
+}
+
 // Streaming playback of raw PCM (Float32 interleaved recommended)
 abstract interface class PlatformStreamPlayer {
   double get volume;
@@ -159,11 +191,17 @@ abstract interface class PlatformStreamPlayer {
   void start();
   void stop();
   void clear();
+
   // Write interleaved Float32 samples; returns frames written.
   int writeFloat32(Float32List interleaved);
-  // Push a single framed encoded packet (codec_id header etc.).
-  // Returns true if accepted/decoded.
+
+  // Unified push method - auto-detects and handles any codec
+  bool pushData(
+      dynamic data); // Can be Float32List (PCM) or Uint8List (encoded)
+
+  // Push encoded packets specifically
   bool pushEncodedPacket(Uint8List packet);
+
   void dispose();
 }
 
