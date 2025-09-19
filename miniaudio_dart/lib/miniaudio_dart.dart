@@ -502,6 +502,8 @@ final class Recorder {
     return true;
   }
 
+  int getCaptureDeviceGeneration() => _recorder.getCaptureDeviceGeneration();
+
   /// Polls input device generation and emits updated device lists.
   /// Caller listens to the stream for hot device changes.
   Stream<List<(String, bool)>> inputDeviceChanges({

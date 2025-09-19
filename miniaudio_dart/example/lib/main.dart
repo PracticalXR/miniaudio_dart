@@ -2,4 +2,4 @@
 import 'example_general.dart' as general;
 import 'example_opus.dart' as opus;
 
-void main() => opus.main();
+void main() => general.main();

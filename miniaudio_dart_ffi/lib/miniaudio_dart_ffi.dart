@@ -430,7 +430,7 @@ class FfiRecorder implements PlatformRecorder {
         if (success == 1) {
           final name = namePtr.cast<Utf8>().toDartString();
           final isDefault = isDefaultPtr.value;
-          devices.add((name, isDefault as bool));
+          devices.add((name, isDefault != 0));
         }
       } finally {
         calloc.free(namePtr);
